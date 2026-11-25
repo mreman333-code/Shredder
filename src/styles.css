@@ -3083,3 +3083,255 @@ input:focus-visible {
   font-size: 10px;
   padding: 5px 8px;
 }
+
+/* ---------- Phones and touch ---------- */
+
+.app {
+  height: 100vh;
+  height: 100dvh;
+}
+
+body {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.viewport-mount,
+.viewport-canvas {
+  touch-action: none;
+}
+
+.sheet-bar,
+.sheet-backdrop,
+.mobile-only,
+.touch-only {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .mouse-only {
+    display: none;
+  }
+
+  .touch-only {
+    display: inline-flex;
+  }
+
+  .tool-btn {
+    width: 48px;
+    height: 46px;
+  }
+
+  .vp-view-buttons button {
+    height: 30px;
+  }
+}
+
+@media (max-width: 860px) {
+  .topbar {
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 46px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding: 5px 8px;
+  }
+
+  .brand-name,
+  .file-chip,
+  .topbar-sep {
+    display: none;
+  }
+
+  .menu-trigger {
+    height: 30px;
+    padding: 0 7px;
+  }
+
+  .topbar-center {
+    order: 3;
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .topbar-actions {
+    margin-left: auto;
+    gap: 2px;
+  }
+
+  .topbar-actions .btn {
+    display: none;
+  }
+
+  .topbar-actions .mobile-only {
+    display: inline-flex;
+  }
+
+  .mode-switch button {
+    height: 30px;
+    padding: 0 12px;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .viewport {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .toolbar {
+    grid-row: 2;
+    grid-column: 1;
+    flex-direction: row;
+    justify-content: space-evenly;
+    align-items: center;
+    gap: 0;
+    padding: 4px 2px calc(4px + env(safe-area-inset-bottom));
+    border-right: none;
+    border-top: 1px solid #0e0e0f;
+  }
+
+  .tool-group {
+    flex-direction: row;
+    gap: 0;
+  }
+
+  .tool-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .tool-label {
+    font-size: 7px;
+  }
+
+  .tool-sep {
+    width: 1px;
+    height: 26px;
+    margin: 0 2px;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 64dvh;
+    max-height: 80dvh;
+    z-index: 40;
+    border-left: none;
+    border-top: 1px solid #4a4a52;
+    border-radius: 10px 10px 0 0;
+    box-shadow: 0 -16px 36px rgba(0, 0, 0, 0.6);
+    padding-bottom: env(safe-area-inset-bottom);
+    transform: translateY(calc(100% + 12px));
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0.2s;
+  }
+
+  .workspace.sidebar-open .sidebar {
+    transform: translateY(0);
+    visibility: visible;
+  }
+
+  .sheet-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    background: #202023;
+    border-bottom: 1px solid #101011;
+  }
+
+  .sheet-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.9px;
+    color: #8f959d;
+  }
+
+  .sheet-done {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 4px;
+    background: #3b5f8e;
+    color: #fff;
+    font-size: 11px;
+  }
+
+  .sheet-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
+  .sidebar-tabs button {
+    height: 38px;
+    font-size: 8.5px;
+    letter-spacing: 0.3px;
+  }
+
+  .vp-top-left {
+    top: 8px;
+    left: 8px;
+  }
+
+  .vp-top-right {
+    top: 8px;
+    right: 8px;
+  }
+
+  .vp-view-buttons button {
+    height: 30px;
+    padding: 0 9px;
+  }
+
+  .vp-bottom-left {
+    bottom: 8px;
+    left: 8px;
+    right: 8px;
+  }
+
+  .vp-stats {
+    display: none;
+  }
+
+  .statusbar {
+    min-height: 22px;
+    font-size: 10px;
+    padding: 0 8px calc(2px + env(safe-area-inset-bottom));
+  }
+
+  .status-hint,
+  .status-right span {
+    display: none;
+  }
+
+  .toast {
+    bottom: 92px;
+  }
+
+  .file-modal {
+    padding: 10px;
+  }
+
+  .file-browser {
+    width: 100%;
+    height: min(88dvh, 640px);
+  }
+
+  .start-card {
+    padding: 12px;
+  }
+
+  .start-card-inner {
+    padding: 18px 16px 14px;
+  }
+}

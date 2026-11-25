@@ -147,6 +147,8 @@ export function App({ initial }: { initial: InitialStore }) {
   const [aiPaused, setAiPaused] = useState(false)
   const [helpSeed, setHelpSeed] = useState<{ id: string; question?: string } | null>(null)
   const [startDismissed, setStartDismissed] = useState(false)
+  // Narrow screens show the sidebar as a bottom sheet instead of a column.
+  const [panelsOpen, setPanelsOpen] = useState(false)
   const [animClipId, setAnimClipId] = useState<string | null>(null)
   const [animPlaying, setAnimPlaying] = useState(false)
   const [animTime, setAnimTime] = useState(0)
@@ -200,6 +202,7 @@ export function App({ initial }: { initial: InitialStore }) {
 
   // The guide is read-only help; openHelp can pre-fill a question from a menu.
   const openHelp = useCallback((question?: string) => {
+    setPanelsOpen(true)
     setSidebarTab('help')
     setHelpSeed({ id: uid('help'), question })
   }, [])
@@ -2332,10 +2335,20 @@ export function App({ initial }: { initial: InitialStore }) {
           >
             <IconChat size={14} /> Help
           </button>
+          <button
+            type="button"
+            className="btn ghost mobile-only"
+            onClick={() => setPanelsOpen((open) => !open)}
+            title="Open the scene, edit and brush panels">
+            Panels
+          </button>
         </div>
       </header>
 
-      <div className="workspace">
+      <div className={`workspace ${panelsOpen ? 'sidebar-open' : ''}`}>
+        {panelsOpen && (
+          <div className="sheet-backdrop" onClick={() => setPanelsOpen(false)} />
+        )}
         <aside className="toolbar">
           <div className="tool-group">
             <button
@@ -2393,7 +2406,10 @@ export function App({ initial }: { initial: InitialStore }) {
             <button
               type="button"
               className="tool-btn"
-              onClick={() => setSidebarTab('character')}
+              onClick={() => {
+                setSidebarTab('character')
+                setPanelsOpen(true)
+              }}
               title="Character builder"
             >
               <IconCharacter size={18} />
@@ -2466,6 +2482,12 @@ export function App({ initial }: { initial: InitialStore }) {
         />
 
         <aside className="sidebar">
+          <div className="sheet-bar">
+            <span className="sheet-title">Panels</span>
+            <button type="button" className="sheet-done" onClick={() => setPanelsOpen(false)}>
+              Done
+            </button>
+          </div>
           <div className="sidebar-tabs">
             <button
               type="button"

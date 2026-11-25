@@ -247,24 +247,28 @@ export function Viewport({
       </div>
 
       <div className="vp-overlay vp-bottom-left">
-        <span className="vp-hint">
+        <span className="vp-hint touch-only">
+          <b>{mode === 'sculpt' ? '1 finger' : 'Tap'}</b>{' '}
+          {mode === 'sculpt' ? 'sculpt · 2 fingers orbit' : 'select · 1 finger orbit · pinch zoom'}
+        </span>
+        <span className="vp-hint mouse-only">
           <b>Click</b> select
         </span>
-        <span className="vp-hint">
+        <span className="vp-hint mouse-only">
           <b>MMB</b> orbit
         </span>
-        <span className="vp-hint">
+        <span className="vp-hint mouse-only">
           <b>Wheel</b> zoom
         </span>
-        <span className="vp-hint">
+        <span className="vp-hint mouse-only">
           <b>{mode === 'sculpt' ? 'LMB' : 'G / R / S'}</b> {mode === 'sculpt' ? 'sculpt' : 'transform'}
         </span>
         {mode === 'sculpt' && (
           <>
-            <span className="vp-hint">
+            <span className="vp-hint mouse-only">
               <b>Shift</b> smooth
             </span>
-            <span className="vp-hint">
+            <span className="vp-hint mouse-only">
               <b>Ctrl</b> invert
             </span>
           </>

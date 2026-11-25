@@ -214,6 +214,7 @@ export class SceneManager {
   private raycaster = new THREE.Raycaster()
   private pointer = new THREE.Vector2()
   private downPos = { x: 0, y: 0 }
+  private activePointers = new Set<number>()
   private resizeObserver: ResizeObserver
   private environment: THREE.Texture
   private disposed = false
@@ -260,6 +261,10 @@ export class SceneManager {
     this.controls.minDistance = 0.35
     this.controls.maxDistance = 60
     this.controls.maxPolarAngle = Math.PI * 0.495
+    // Touch: one finger orbits, two fingers pinch and pan.
+    this.controls.touches.ONE = THREE.TOUCH.ROTATE
+    this.controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
+    this.renderer.domElement.style.touchAction = 'none'
 
     const pmrem = new THREE.PMREMGenerator(this.renderer)
     const room = new RoomEnvironment()
@@ -360,6 +365,7 @@ export class SceneManager {
     this.renderer.domElement.addEventListener('pointerdown', this.handlePointerDown)
     this.renderer.domElement.addEventListener('pointermove', this.handlePointerMove)
     this.renderer.domElement.addEventListener('pointerup', this.handlePointerUp)
+    this.renderer.domElement.addEventListener('pointercancel', this.handlePointerCancel)
 
     this.resizeObserver = new ResizeObserver(this.resize)
     this.resizeObserver.observe(container)
@@ -401,8 +407,15 @@ export class SceneManager {
   }
 
   private handlePointerDown = (event: PointerEvent) => {
+    this.activePointers.add(event.pointerId)
     this.downPos = { x: event.clientX, y: event.clientY }
-    if (this.sculptMode && event.button === 0) this.beginSculptStroke(event)
+    if (!this.sculptMode || event.button !== 0) return
+    // A second finger turns the gesture into an orbit or pinch, not a brush stroke.
+    if (this.activePointers.size > 1) {
+      if (this.stroke) this.endSculptStroke()
+      return
+    }
+    this.beginSculptStroke(event)
   }
 
   private handlePointerMove = (event: PointerEvent) => {
@@ -413,6 +426,9 @@ export class SceneManager {
   }
 
   private handlePointerUp = (event: PointerEvent) => {
+    this.activePointers.delete(event.pointerId)
+    // A finger never hovers, so the brush ring is cleared when it lifts.
+    if (event.pointerType !== 'mouse') this.sculptCursor.visible = false
     if (this.stroke) {
       this.endSculptStroke()
       return
@@ -422,6 +438,11 @@ export class SceneManager {
     if (moved > 5) return
     if (this.transform.dragging || this.transform.axis) return
     this.pick(event)
+  }
+
+  private handlePointerCancel = (event: PointerEvent) => {
+    this.activePointers.delete(event.pointerId)
+    if (this.activePointers.size === 0) this.endSculptStroke()
   }
 
   private pick(event: PointerEvent) {
@@ -454,11 +475,15 @@ export class SceneManager {
       this.controls.mouseButtons.LEFT = undefined as unknown as THREE.MOUSE
       this.controls.mouseButtons.MIDDLE = THREE.MOUSE.ROTATE
       this.controls.mouseButtons.RIGHT = THREE.MOUSE.PAN
+      // One finger paints, two fingers still orbit and pinch.
+      this.controls.touches.ONE = undefined as unknown as THREE.TOUCH
+      this.controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
       this.renderer.domElement.style.cursor = 'crosshair'
     } else {
       this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE
       this.controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY
       this.controls.mouseButtons.RIGHT = THREE.MOUSE.PAN
+      this.controls.touches.ONE = THREE.TOUCH.ROTATE
       this.renderer.domElement.style.cursor = ''
       this.sculptCursor.visible = false
       this.endSculptStroke()
@@ -1376,6 +1401,7 @@ export class SceneManager {
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown)
     this.renderer.domElement.removeEventListener('pointermove', this.handlePointerMove)
     this.renderer.domElement.removeEventListener('pointerup', this.handlePointerUp)
+    this.renderer.domElement.removeEventListener('pointercancel', this.handlePointerCancel)
     window.removeEventListener('pointermove', this.strokeMove)
     window.removeEventListener('pointerup', this.strokeUp)
     this.sculptCursor.geometry.dispose()
