@@ -44,6 +44,8 @@ interface ViewportProps {
     radius: number
     strength: number
     symmetry: SculptSymmetry
+    smooth: boolean
+    invert: boolean
   }
 }
 
@@ -161,6 +163,8 @@ export function Viewport({
       radius: sculpt.radius,
       strength: sculpt.strength,
       symmetry: sculpt.symmetry,
+      smooth: sculpt.smooth,
+      invert: sculpt.invert,
     })
   }, [
     sculpt?.brush,
@@ -169,6 +173,8 @@ export function Viewport({
     sculpt?.symmetry.x,
     sculpt?.symmetry.y,
     sculpt?.symmetry.z,
+    sculpt?.smooth,
+    sculpt?.invert,
   ])
 
   useEffect(() => {

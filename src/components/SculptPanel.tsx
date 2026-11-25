@@ -8,10 +8,14 @@ interface SculptPanelProps {
   radius: number
   strength: number
   symmetry: SculptSymmetry
+  smooth: boolean
+  invert: boolean
   onBrush: (brush: SculptBrushId) => void
   onRadius: (radius: number) => void
   onStrength: (strength: number) => void
   onSymmetry: (axis: keyof SculptSymmetry) => void
+  onSmooth: () => void
+  onInvert: () => void
   onReset: () => void
 }
 
@@ -25,10 +29,14 @@ export function SculptPanel({
   radius,
   strength,
   symmetry,
+  smooth,
+  invert,
   onBrush,
   onRadius,
   onStrength,
   onSymmetry,
+  onSmooth,
+  onInvert,
   onReset,
 }: SculptPanelProps) {
   const active = SCULPT_BRUSHES.find((entry) => entry.id === brush)
@@ -38,8 +46,9 @@ export function SculptPanel({
       <div className="sculpt-heading">
         <div className="section-title">SCULPT</div>
         <div className="panel-hint">
-          Drag on the part with the left mouse button. Shift smooths, Ctrl carves inwards, the
-          middle button orbits.
+          Drag on the part with the left mouse button or one finger. Shift smooths, Ctrl carves
+          inwards, the middle button orbits. On a touch screen, switch on Smooth or Invert below
+          instead of holding a key.
         </div>
       </div>
 
@@ -66,6 +75,33 @@ export function SculptPanel({
           ))}
         </div>
         {active && <div className="sculpt-brush-hint">{active.hint}</div>}
+      </div>
+
+      <div className="section">
+        <div className="section-title">Modifiers</div>
+        <div className="sculpt-brushes">
+          <button
+            type="button"
+            className={`sculpt-brush sculpt-mod ${smooth ? 'active' : ''}`}
+            aria-pressed={smooth}
+            onClick={onSmooth}
+            title="Smooth the stroke while it is on, like holding Shift"
+          >
+            Smooth (Shift)
+          </button>
+          <button
+            type="button"
+            className={`sculpt-brush sculpt-mod ${invert ? 'active' : ''}`}
+            aria-pressed={invert}
+            onClick={onInvert}
+            title="Carve inwards while it is on, like holding Ctrl"
+          >
+            Invert (Ctrl)
+          </button>
+        </div>
+        <div className="sculpt-brush-hint">
+          These stay on until you tap them again, so your other finger is free to sculpt.
+        </div>
       </div>
 
       <div className="section">

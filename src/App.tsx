@@ -164,6 +164,9 @@ export function App({ initial }: { initial: InitialStore }) {
     y: false,
     z: false,
   })
+  // On-screen stand-ins for holding Shift (smooth) or Ctrl (invert) while sculpting.
+  const [sculptSmooth, setSculptSmooth] = useState(false)
+  const [sculptInvert, setSculptInvert] = useState(false)
 
   const fsRef = useRef(fs)
   fsRef.current = fs
@@ -2434,6 +2437,8 @@ export function App({ initial }: { initial: InitialStore }) {
             radius: sculptRadius,
             strength: sculptStrength,
             symmetry: sculptSymmetry,
+            smooth: sculptSmooth,
+            invert: sculptInvert,
           }}
           loadToken={loadToken}
           callbacks={{
@@ -2625,12 +2630,16 @@ export function App({ initial }: { initial: InitialStore }) {
                 radius={sculptRadius}
                 strength={sculptStrength}
                 symmetry={sculptSymmetry}
+                smooth={sculptSmooth}
+                invert={sculptInvert}
                 onBrush={setSculptBrush}
                 onRadius={setSculptRadius}
                 onStrength={setSculptStrength}
                 onSymmetry={(axis) =>
                   setSculptSymmetry((current) => ({ ...current, [axis]: !current[axis] }))
                 }
+                onSmooth={() => setSculptSmooth((current) => !current)}
+                onInvert={() => setSculptInvert((current) => !current)}
                 onReset={resetSculpt}
               />
             )}

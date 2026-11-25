@@ -56,6 +56,9 @@ export interface SculptBrushState {
   radius: number
   strength: number
   symmetry: SculptSymmetry
+  /** Latched on-screen modifiers, so touch strokes get Shift and Ctrl too. */
+  smooth: boolean
+  invert: boolean
 }
 
 interface SculptStrokeState {
@@ -232,6 +235,8 @@ export class SceneManager {
     radius: 0.12,
     strength: 0.5,
     symmetry: { x: true, y: false, z: false },
+    smooth: false,
+    invert: false,
   }
   private stroke: SculptStrokeState | null = null
   private sculptCursor: THREE.Mesh
@@ -604,7 +609,7 @@ export class SceneManager {
     const normal = geometry.getAttribute('normal') as THREE.BufferAttribute | undefined
     if (!position || !normal) return
 
-    const shift = event.shiftKey && this.sculptBrush.id !== 'smooth'
+    const smooth = (event.shiftKey || this.sculptBrush.smooth) && this.sculptBrush.id !== 'smooth'
     const delta = new THREE.Vector3().subVectors(point, stroke.lastLocal)
     const data: SculptMeshData = {
       positions: position.array as Float32Array,
@@ -613,13 +618,13 @@ export class SceneManager {
       uvs: null,
     }
     const moved = applyStroke(data, {
-      brush: shift ? 'smooth' : this.sculptBrush.id,
+      brush: smooth ? 'smooth' : this.sculptBrush.id,
       center: [point.x, point.y, point.z],
       normal: [stroke.normalLocal.x, stroke.normalLocal.y, stroke.normalLocal.z],
       delta: [delta.x, delta.y, delta.z],
       radius: stroke.radiusLocal,
       strength: this.sculptBrush.strength,
-      invert: event.ctrlKey || event.metaKey,
+      invert: event.ctrlKey || event.metaKey || this.sculptBrush.invert,
       symmetry: this.sculptBrush.symmetry,
       neighbors: stroke.neighbors,
     })
