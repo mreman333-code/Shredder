@@ -1,0 +1,9 @@
+{
+  "entrypoint": "shredder-worker.js",
+  "compatibilityDate": "2024-11-01",
+  "modules": [
+    { "name": "shredder-worker.js", "type": "esm", "path": "./sites/shredder-worker.js" }
+  ],
+  "assetsDirectory": "./dist",
+  "spa": true
+}

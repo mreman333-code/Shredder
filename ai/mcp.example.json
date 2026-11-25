@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "shredder": {
+      "command": "C:\\Shredder\\Shredder.exe",
+      "args": ["C:\\Shredder\\resources\\ai\\mcp-server.cjs"],
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1",
+        "SHREDDER_URL": "http://127.0.0.1:3927"
+      }
+    }
+  }
+}

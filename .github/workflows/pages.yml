@@ -1,0 +1,63 @@
+name: Web build
+
+# Publishes the browser build of Shredder to GitHub Pages. The app is a static
+# Vite bundle (no server), so the Pages artifact is just dist/.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # The web build never launches Electron, so skip its ~100 MB binary.
+      - name: Install dependencies
+        run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - name: Build web bundle
+        run: npm run build
+
+      # Pages has no single-page fallback; this keeps deep links working.
+      - name: Add 404 fallback
+        run: cp dist/index.html dist/404.html
+
+      # enablement: true turns Pages on with the GitHub Actions source if it is
+      # still disabled, so the first push publishes without manual setup.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

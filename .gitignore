@@ -1,0 +1,8 @@
+# Dependencies and build output are rebuilt by CI, so they stay out of git.
+node_modules/
+dist/
+release/
+.cache/
+artifacts/
+*.exe
+*.log
