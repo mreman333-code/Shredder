@@ -3273,9 +3273,19 @@ body {
   }
 
   .sidebar-tabs button {
-    height: 38px;
-    font-size: 8.5px;
-    letter-spacing: 0.3px;
+    height: 44px;
+    min-width: 0;
+    padding: 0 2px;
+    font-size: 11.5px;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+  }
+
+  .vp-hint {
+    font-size: 12px;
+    line-height: 1.35;
+    padding: 4px 8px;
   }
 
   .vp-top-left {
@@ -3304,9 +3314,9 @@ body {
   }
 
   .statusbar {
-    min-height: 22px;
-    font-size: 10px;
-    padding: 0 8px calc(2px + env(safe-area-inset-bottom));
+    min-height: 28px;
+    font-size: 12px;
+    padding: 3px 10px calc(3px + env(safe-area-inset-bottom));
   }
 
   .status-hint,
@@ -3333,5 +3343,24 @@ body {
 
   .start-card-inner {
     padding: 18px 16px 14px;
+  }
+}
+
+/* Very narrow phones: let the tab row scroll instead of clipping labels. */
+@media (max-width: 380px) {
+  .sidebar-tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .sidebar-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-tabs button {
+    flex: 0 0 auto;
+    min-width: 58px;
+    padding: 0 8px;
   }
 }
