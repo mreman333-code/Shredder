@@ -25,6 +25,28 @@ export interface MeshBone {
  */
 export const MAX_TEXTURE_DATA_URL = 16 * 1024 * 1024
 
+/** One material of an imported mesh that ships more than one material. */
+export interface MeshMaterial {
+  /** Flat base colour, as `#rrggbb`. */
+  color: string
+  /** Packed base-colour image for this material, when it has one. */
+  baseColor?: string
+  /** Sampling flip for the packed image; false for glTF images. */
+  baseColorFlipY?: boolean
+  roughness: number
+  metalness: number
+}
+
+/** A draw range that selects which material paints which triangles. */
+export interface MeshGroup {
+  /** First index in the packed triangle list. */
+  start: number
+  /** Number of indices in the range. */
+  count: number
+  /** Index into `materials`. */
+  material: number
+}
+
 export interface MeshAsset {
   vertices: number
   triangles: number
@@ -48,6 +70,14 @@ export interface MeshAsset {
   baseColor?: string
   /** Sampling flip the packed image needs; false for glTF, true (default) otherwise. */
   baseColorFlipY?: boolean
+  /**
+   * Every material of a multi-material mesh, each with its own packed image.
+   * Together with `groups` this keeps all colours of the file instead of
+   * showing only the first material's texture.
+   */
+  materials?: MeshMaterial[]
+  /** Draw ranges that point each part of the mesh at one of its materials. */
+  groups?: MeshGroup[]
   /** Source format, for the outliner and the AI bridge. */
   format?: string
   /** Original file name. */
@@ -215,7 +245,13 @@ export function meshAssetSummary(asset: MeshAsset | undefined): string {
   if (!asset) return ''
   const parts = [`${asset.triangles.toLocaleString()} tris`]
   if (asset.bones?.length) parts.push(`${asset.bones.length} bones`)
-  if (asset.baseColor) parts.push('texture')
+  if (asset.materials?.length) {
+    const textures = asset.materials.filter((material) => material.baseColor).length
+    parts.push(`${asset.materials.length} materials`)
+    if (textures > 0) parts.push(`${textures} textures`)
+  } else if (asset.baseColor) {
+    parts.push('texture')
+  }
   if (asset.colors) parts.push('vertex colours')
   if (asset.format) parts.push(asset.format.toUpperCase())
   return parts.join(' · ')

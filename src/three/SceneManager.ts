@@ -40,6 +40,7 @@ import {
   disposeTextures,
   preloadAssetTextures,
   preloadPictures,
+  textureFor,
   textureForAsset,
   textureInstance,
 } from './textures'
@@ -756,18 +757,45 @@ export class SceneManager {
     this.sculptCursor.scale.set(radius, radius, radius)
   }
 
+  /**
+   * Every material the file put on a mesh, each with its own packed image.
+   * A single-material mesh keeps the object's own colour and texture instead.
+   */
+  private importedMaterials(
+    obj: SceneObject,
+  ): THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[] {
+    const asset = obj.mesh
+    if (!asset?.materials?.length) {
+      return new THREE.MeshStandardMaterial({
+        color: obj.color,
+        roughness: obj.roughness,
+        metalness: obj.metalness,
+        map: asset?.hasUv ? (textureForAsset(asset) ?? null) : null,
+        vertexColors: Boolean(asset?.colors),
+        wireframe: this.shading === 'wire',
+      })
+    }
+    return asset.materials.map(
+      (slot) =>
+        new THREE.MeshStandardMaterial({
+          color: slot.color,
+          roughness: slot.roughness,
+          metalness: slot.metalness,
+          map:
+            asset.hasUv && slot.baseColor
+              ? textureFor(slot.baseColor, slot.baseColorFlipY !== false)
+              : null,
+          vertexColors: Boolean(asset.colors),
+          wireframe: this.shading === 'wire',
+        }),
+    )
+  }
+
   /** Geometry imported from a file, optionally driven by its own bind skeleton. */
   private createImportedMesh(obj: SceneObject): THREE.Mesh {
     const asset = obj.mesh
     if (!asset) throw new Error(`${obj.name} has no geometry`)
-    const material = new THREE.MeshStandardMaterial({
-      color: obj.color,
-      roughness: obj.roughness,
-      metalness: obj.metalness,
-      map: asset.hasUv ? (textureForAsset(asset) ?? null) : null,
-      vertexColors: Boolean(asset.colors),
-      wireframe: this.shading === 'wire',
-    })
+    const material = this.importedMaterials(obj)
     const geometry = meshGeometry(asset)
     const bones = asset.bones ?? []
     let mesh: THREE.Mesh
@@ -963,8 +991,19 @@ export class SceneManager {
     node.scale.set(obj.scale[0], obj.scale[1], obj.scale[2])
     node.visible = obj.visible
     if (obj.kind !== 'group') {
-      const material = (node as THREE.Mesh).material as THREE.MeshStandardMaterial
-      if (Array.isArray(material)) return
+      const material = (node as THREE.Mesh).material as
+        | THREE.MeshStandardMaterial
+        | THREE.MeshStandardMaterial[]
+      if (Array.isArray(material)) {
+        // Every material keeps the file's own colour and image; paint swaps
+        // them all for the painted vertex colours.
+        this.applyPaintColors(node as THREE.Mesh, obj)
+        const list = (node as THREE.Mesh).material as
+          | THREE.MeshStandardMaterial
+          | THREE.MeshStandardMaterial[]
+        for (const entry of Array.isArray(list) ? list : [list]) entry.wireframe = this.shading === 'wire'
+        return
+      }
       const parent = obj.parentId
         ? this.doc?.objects.find((entry) => entry.id === obj.parentId)
         : undefined
@@ -976,7 +1015,7 @@ export class SceneManager {
       material.roughness = obj.roughness
       material.metalness = obj.metalness
       // Imported parts keep their packed texture unless paint replaced it.
-      if (obj.kind === 'mesh' && obj.mesh?.hasUv) {
+      if (obj.kind === 'mesh' && obj.mesh?.hasUv && !obj.mesh.materials?.length) {
         material.map = obj.paint ? null : (textureForAsset(obj.mesh) ?? null)
       }
       this.applyPaintColors(node as THREE.Mesh, obj)
@@ -1472,9 +1511,11 @@ export class SceneManager {
       preloadAssetTextures(this.doc.objects.map((object) => object.mesh)),
       preloadPictures(pictureUrls),
     ])
-    const { scene, animations } = buildExportScene(this.doc, (asset) => {
+    const { scene, animations } = buildExportScene(this.doc, (asset, material) => {
       if (!asset.hasUv) return undefined
-      const texture = textureForAsset(asset)
+      const texture = material?.baseColor
+        ? textureFor(material.baseColor, material.baseColorFlipY !== false)
+        : textureForAsset(asset)
       return texture?.image ? texture : undefined
     })
     const exporter = new GLTFExporter()
@@ -1652,22 +1693,25 @@ export class SceneManager {
         colors[i * 3 + 1] = Math.min(255, Math.round(attribute.getY(i) * factor[1]))
         colors[i * 3 + 2] = Math.min(255, Math.round(attribute.getZ(i) * factor[2]))
       }
-      const material = mesh.material as THREE.MeshStandardMaterial
-      material.vertexColors = true
-      material.color.set('#ffffff')
-      material.map = null
-      material.needsUpdate = true
+      this.paintMaterialLook(mesh)
       return colors
     }
     const colors = solidColors(count, hexColorBytes(obj.color))
     mesh.geometry.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3, true))
     mesh.geometry.userData.paint = true
-    const material = mesh.material as THREE.MeshStandardMaterial
-    material.vertexColors = true
-    material.color.set('#ffffff')
-    material.map = null
-    material.needsUpdate = true
+    this.paintMaterialLook(mesh)
     return colors
+  }
+
+  /** Paint is the final colour: every material shows it, textures step aside. */
+  private paintMaterialLook(mesh: THREE.Mesh) {
+    const material = mesh.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[]
+    for (const entry of Array.isArray(material) ? material : [material]) {
+      entry.vertexColors = true
+      entry.color.set('#ffffff')
+      entry.map = null
+      entry.needsUpdate = true
+    }
   }
 
   private beginPaintStroke(event: PointerEvent) {
@@ -1811,12 +1855,13 @@ export class SceneManager {
     this.sculptCursor.scale.set(radius, radius, radius)
   }
 
-  /** Swaps a part's material between its packed colours and painted colours. */
+  /** Swaps a part's materials between its packed colours and painted colours. */
   private applyPaintColors(node: THREE.Mesh, obj: SceneObject) {
     const geometry = node.geometry
     const position = geometry.getAttribute('position') as THREE.BufferAttribute | undefined
-    const material = node.material as THREE.MeshStandardMaterial | THREE.Material[]
-    if (!position || Array.isArray(material)) return
+    if (!position) return
+    const current = node.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[]
+    const list = Array.isArray(current) ? current : [current]
     const paint = obj.paint ? decodePaintColors(obj.paint, position.count) : null
     if (paint) {
       const existing = geometry.getAttribute('color') as THREE.BufferAttribute | undefined
@@ -1827,10 +1872,7 @@ export class SceneManager {
         existing.needsUpdate = true
       }
       geometry.userData.paint = true
-      material.vertexColors = true
-      material.color.set('#ffffff')
-      material.map = null
-      material.needsUpdate = true
+      this.paintMaterialLook(node)
       return
     }
     if (geometry.userData.paint !== true) return
@@ -1848,11 +1890,23 @@ export class SceneManager {
         ;(existing.array as Uint8Array).set(base)
         existing.needsUpdate = true
       }
-      material.vertexColors = true
-    } else {
-      if (existing) geometry.deleteAttribute('color')
-      material.vertexColors = false
+    } else if (existing) {
+      geometry.deleteAttribute('color')
     }
+    if (Array.isArray(current)) {
+      // Multi-material meshes get their own material per draw group back.
+      node.material = this.importedMaterials(obj)
+      for (const entry of list) entry.dispose()
+      const rebuilt = node.material as
+        | THREE.MeshStandardMaterial
+        | THREE.MeshStandardMaterial[]
+      for (const entry of Array.isArray(rebuilt) ? rebuilt : [rebuilt]) {
+        entry.wireframe = this.shading === 'wire'
+      }
+      return
+    }
+    const material = current
+    material.vertexColors = Boolean(base)
     material.userData.pictureUrl = undefined
     material.needsUpdate = true
   }

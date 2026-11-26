@@ -62,6 +62,11 @@ export function meshGeometry(asset: MeshAsset): THREE.BufferGeometry {
     : null
   if (colors) geometry.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3, true))
   geometry.setIndex(new THREE.BufferAttribute(decoded.indices, 1))
+  // Multi-material files keep one draw range per material, each with its own
+  // packed image, instead of collapsing to the first material.
+  for (const group of asset.groups ?? []) {
+    geometry.addGroup(group.start, group.count, group.material)
+  }
   if (decoded.joints && decoded.weights) {
     geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(decoded.joints, 4))
     geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(decoded.weights, 4))

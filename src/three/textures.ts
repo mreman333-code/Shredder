@@ -347,11 +347,18 @@ export async function preloadAssetTextures(
   assets: Array<MeshAsset | undefined>,
 ): Promise<void> {
   const pending = new Set<Promise<THREE.Texture>>()
-  for (const asset of assets) {
-    if (!asset?.baseColor) continue
-    const texture = textureFor(asset.baseColor, asset.baseColorFlipY !== false)
+  const queue = (url: string | undefined, flipY: unknown) => {
+    if (!url) return
+    const texture = textureFor(url, flipY !== false)
     const promise = loading.get(texture)
     if (promise) pending.add(promise)
+  }
+  for (const asset of assets) {
+    if (!asset) continue
+    queue(asset.baseColor, asset.baseColorFlipY)
+    for (const material of asset.materials ?? []) {
+      queue(material.baseColor, material.baseColorFlipY)
+    }
   }
   await Promise.all(pending)
 }

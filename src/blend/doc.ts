@@ -1,4 +1,10 @@
-import { MAX_TEXTURE_DATA_URL, type MeshAsset, type MeshBone } from './mesh'
+import {
+  MAX_TEXTURE_DATA_URL,
+  type MeshAsset,
+  type MeshBone,
+  type MeshGroup,
+  type MeshMaterial,
+} from './mesh'
 import { MAX_SCULPT_VERTICES } from './sculpt'
 import { MAX_PAINT_VERTICES, type PaintLayer } from './paint'
 import {
@@ -696,6 +702,52 @@ function normalizeBone(raw: unknown): MeshBone | null {
   }
 }
 
+/** Only an embedded image is accepted: a project never points at a file. */
+function packedImage(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    value.startsWith('data:image/') &&
+    value.length <= MAX_TEXTURE_DATA_URL
+    ? value
+    : undefined
+}
+
+function normalizeMeshMaterial(raw: unknown): MeshMaterial | null {
+  if (!raw || typeof raw !== 'object') return null
+  const material = raw as Record<string, unknown>
+  const baseColor = packedImage(material.baseColor)
+  return {
+    color: readString(material.color, '#ffffff'),
+    baseColor,
+    baseColorFlipY: baseColor && material.baseColorFlipY === false ? false : undefined,
+    roughness: Math.min(1, Math.max(0, readNumber(material.roughness, 0.58))),
+    metalness: Math.min(1, Math.max(0, readNumber(material.metalness, 0.08))),
+  }
+}
+
+function normalizeMeshGroups(
+  raw: unknown,
+  materialCount: number,
+  triangles: number,
+): MeshGroup[] | undefined {
+  if (!Array.isArray(raw) || materialCount === 0) return undefined
+  const limit = triangles * 3
+  const groups: MeshGroup[] = []
+  for (const item of raw.slice(0, 64)) {
+    if (!item || typeof item !== 'object') continue
+    const group = item as Record<string, unknown>
+    const start = Math.floor(readNumber(group.start, -1))
+    const count = Math.floor(readNumber(group.count, 0))
+    if (start < 0 || count <= 0 || start + count > limit) continue
+    const material = Math.floor(readNumber(group.material, 0))
+    groups.push({
+      start,
+      count,
+      material: Math.min(materialCount - 1, Math.max(0, material)),
+    })
+  }
+  return groups.length > 0 ? groups : undefined
+}
+
 function normalizeMesh(raw: unknown): MeshAsset | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const asset = raw as Record<string, unknown>
@@ -706,13 +758,15 @@ function normalizeMesh(raw: unknown): MeshAsset | undefined {
   const bones = Array.isArray(asset.bones)
     ? asset.bones.map(normalizeBone).filter((bone): bone is MeshBone => bone !== null)
     : undefined
-  // Only an embedded image is accepted: a project never points at a file.
-  const packedColor =
-    typeof asset.baseColor === 'string' &&
-    asset.baseColor.startsWith('data:image/') &&
-    asset.baseColor.length <= MAX_TEXTURE_DATA_URL
-      ? asset.baseColor
-      : undefined
+  const packedColor = packedImage(asset.baseColor)
+  const materials = Array.isArray(asset.materials)
+    ? asset.materials
+        .slice(0, 32)
+        .map(normalizeMeshMaterial)
+        .filter((material): material is MeshMaterial => material !== null)
+    : []
+  // Draw ranges only mean something next to the material list they point at.
+  const groups = normalizeMeshGroups(asset.groups, materials.length, triangles)
   // Three bytes per vertex in base64; the edge case of a short read is caught
   // again when the attribute is built, so this only rejects impossible sizes.
   const vertexColors =
@@ -732,6 +786,7 @@ function normalizeMesh(raw: unknown): MeshAsset | undefined {
     colors: vertexColors,
     baseColor: packedColor,
     baseColorFlipY: packedColor && asset.baseColorFlipY === false ? false : undefined,
+    ...(materials.length > 1 && groups ? { materials, groups } : {}),
     format: typeof asset.format === 'string' ? asset.format : undefined,
     source: typeof asset.source === 'string' ? asset.source : undefined,
   }

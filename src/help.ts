@@ -157,7 +157,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '• Blender and Unity exports: FBX, OBJ, DAE (Collada)\n' +
       '• Other meshes: 3DS, STL, PLY, 3MF, DXF\n' +
       '• .blend archives (Blender must be installed)\n\n' +
-      'The model arrives as editable scene objects: a group for the file, groups for its node hierarchy, and one object per mesh with its material colour and packed base-colour texture.\n\n' +
+      'The model arrives as editable scene objects: a group for the file, groups for its node hierarchy, and one object per mesh with its materials, colours and packed base-colour textures.\n\n' +
       'Z-up files are turned upright, centimetre or millimetre files are rescaled to metres, and the model is centred and dropped onto the ground.',
     next: ['textures', 'formats', 'model-scale'],
   },
@@ -208,9 +208,10 @@ export const HELP_TOPICS: HelpTopic[] = [
       'base color',
     ],
     body:
-      "Shredder packs each mesh's base-colour image into the project itself, so imported models keep their look without the original image files.\n\n" +
+      "Shredder packs each mesh's base-colour images into the project itself, so imported models keep their look without the original image files.\n\n" +
       '• glTF/GLB images are copied exactly as they are stored in the file.\n' +
       '• FBX, OBJ and Collada textures are converted once to a compact JPEG or PNG (up to 2048 px).\n' +
+      '• A mesh with several materials keeps every material and its own image, not just the first.\n' +
       '• A texture is attached only when the mesh has UV coordinates.\n' +
       '• The material colour is kept as a tint and can be changed in the Edit tab.\n\n' +
       'A saved project and an exported GLB both keep packed textures. Only base-colour maps are imported; normal, roughness and metallic maps are not.\n\n' +

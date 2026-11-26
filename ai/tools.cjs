@@ -28,7 +28,7 @@ const TOOLS = [
   {
     name: 'import_model',
     description:
-      'Import a 3D model file into the open project from an absolute path. Accepts GLB, glTF, FBX, OBJ, Collada (.dae), 3DS, STL, PLY, 3MF and DXF, plus Blender .blend archives when Blender is installed. The file hierarchy comes in as groups, meshes keep their material colour and base-colour texture (packed into the project), and rigged meshes keep their bind skeleton. Returns the imported root name, mesh count, triangle count and bone count.',
+      'Import a 3D model file into the open project from an absolute path. Accepts GLB, glTF, FBX, OBJ, Collada (.dae), 3DS, STL, PLY, 3MF and DXF, plus Blender .blend archives when Blender is installed. The file hierarchy comes in as groups, meshes keep every material, colour and base-colour texture (packed into the project), and rigged meshes keep their bind skeleton. Returns the imported root name, mesh count, triangle count and bone count.',
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string', description: 'Absolute path of the model file' } },

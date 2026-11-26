@@ -295,9 +295,16 @@ export function Properties({
               <b>{obj.mesh.bones.length}</b>
             </div>
           )}
-          {obj.mesh.baseColor && (
+          {obj.mesh.materials && obj.mesh.materials.length > 1 && (
             <div className="stat-row">
-              <span>Texture</span>
+              <span>Materials</span>
+              <b>{obj.mesh.materials.length}</b>
+            </div>
+          )}
+          {(obj.mesh.baseColor ||
+            obj.mesh.materials?.some((material) => material.baseColor)) && (
+            <div className="stat-row">
+              <span>Textures</span>
               <b>Packed</b>
             </div>
           )}

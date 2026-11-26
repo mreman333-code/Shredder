@@ -8,7 +8,13 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js'
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
 import { baseObject, uniqueName, type SceneObject } from '../blend/doc'
-import { packMesh, type MeshAsset, type MeshBone } from '../blend/mesh'
+import {
+  packMesh,
+  type MeshAsset,
+  type MeshBone,
+  type MeshGroup,
+  type MeshMaterial,
+} from '../blend/mesh'
 import { packPaintColors } from '../blend/paint'
 import {
   glbBaseColorTextures,
@@ -245,6 +251,41 @@ function materialColor(material: THREE.Material | undefined): [number, number, n
 
 const toByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value * 255)))
 
+/** Base-colour maps a loaded scene references, one entry per material. */
+function materialMaps(root: THREE.Object3D): THREE.Texture[] {
+  const maps: THREE.Texture[] = []
+  root.traverse((node) => {
+    const mesh = node as THREE.Mesh
+    if (!(mesh as THREE.Mesh).isMesh) return
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    for (const material of materials) {
+      const map = (material as THREE.MeshStandardMaterial | undefined)?.map
+      if (map) maps.push(map)
+    }
+  })
+  return maps
+}
+
+function mapReady(map: THREE.Texture): boolean {
+  const image = map.image as { width?: number; height?: number } | undefined
+  return Boolean(image && (image.width ?? 0) > 0 && (image.height ?? 0) > 0)
+}
+
+/**
+ * Collada, FBX and 3DS hand back materials before their images have decoded.
+ * Import packs and rasterizes those images, so wait for them (briefly) first;
+ * otherwise a textured file would arrive flat-coloured.
+ */
+async function settleMaterialImages(root: THREE.Object3D): Promise<void> {
+  const maps = materialMaps(root)
+  if (maps.length === 0) return
+  const deadline = Date.now() + 1500
+  while (Date.now() < deadline) {
+    if (maps.every(mapReady)) return
+    await new Promise((resolve) => setTimeout(resolve, 40))
+  }
+}
+
 /**
  * The colours the file itself authored. Two ways models carry them are read
  * here instead of being flattened to the first material:
@@ -255,7 +296,7 @@ const toByte = (value: number): number => Math.max(0, Math.min(255, Math.round(v
  */
 function bakedColors(
   mesh: THREE.Mesh,
-  textureByMaterial: Map<string, PackedTexture>,
+  textured: boolean,
 ): { colors: string; flat: boolean } | undefined {
   const geometry = mesh.geometry
   const position = geometry.getAttribute('position')
@@ -264,14 +305,8 @@ function bakedColors(
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
   const groups = geometry.groups.filter((group) => group.count > 0)
   const multi = materials.length > 1 && groups.length > 0
-  const hasTexture =
-    Boolean(geometry.getAttribute('uv')) &&
-    materials.some((material) => {
-      const standard = material as THREE.MeshStandardMaterial
-      return textureByMaterial.has(material.uuid) || Boolean(standard?.map)
-    })
   const source = geometry.getAttribute('color')
-  if (!source && !(multi && !hasTexture)) return undefined
+  if (!source && !(multi && !textured)) return undefined
 
   const colors = new Uint8Array(count * 3)
   colors.fill(255)
@@ -286,10 +321,11 @@ function bakedColors(
   // A textured multi-material mesh keeps its texture in the material, so only
   // the vertex attribute is carried there; flat-coloured models get every
   // material's colour painted onto its faces.
-  if (multi && !hasTexture) {
+  if (multi && !textured) {
     const index = geometry.getIndex()
     for (const group of groups) {
-      const [r, g, b] = materialColor(materials[group.materialIndex ?? 0])
+      const material = materials[Math.min(materials.length - 1, Math.max(0, group.materialIndex ?? 0))]
+      const [r, g, b] = materialColor(material)
       const end = Math.min(group.start + group.count, index ? index.count : count)
       for (let cursor = group.start; cursor < end; cursor += 1) {
         const vertex = index ? index.getX(cursor) : cursor
@@ -301,43 +337,113 @@ function bakedColors(
     }
   }
 
-  return { colors: packPaintColors(colors), flat: multi && !hasTexture }
+  return { colors: packPaintColors(colors), flat: multi && !textured }
 }
 
-function materialLook(
+interface MaterialSlot {
+  color: string
+  roughness: number
+  metalness: number
+  texture?: PackedTexture
+}
+
+/** Every material on the mesh, in draw-group order, with its own image. */
+function materialSlots(
   mesh: THREE.Mesh,
   textureByMaterial: Map<string, PackedTexture>,
-): {
+): MaterialSlot[] {
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+  return materials.map((material) => {
+    const standard = material as THREE.MeshStandardMaterial | undefined
+    // glTF images come out of the file itself; other formats are rasterized once.
+    const texture =
+      (standard ? textureByMaterial.get(material.uuid) : undefined) ??
+      packedTextureFromMaterial(standard?.map)
+    return {
+      color:
+        standard?.color instanceof THREE.Color
+          ? `#${standard.color.getHexString()}`
+          : '#9aa4b0',
+      texture,
+      roughness:
+        typeof standard?.roughness === 'number' && Number.isFinite(standard.roughness)
+          ? Math.min(1, Math.max(0, standard.roughness))
+          : 0.58,
+      metalness:
+        typeof standard?.metalness === 'number' && Number.isFinite(standard.metalness)
+          ? Math.min(1, Math.max(0, standard.metalness))
+          : 0.08,
+    }
+  })
+}
+
+interface MaterialLook {
   color: string
   roughness: number
   metalness: number
   texture?: PackedTexture
   colors?: string
-} {
-  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
-  const standard = material as THREE.MeshStandardMaterial | undefined
-  const baked = bakedColors(mesh, textureByMaterial)
-  const color = baked?.flat
-    ? '#ffffff'
-    : standard?.color instanceof THREE.Color
-      ? `#${standard.color.getHexString()}`
-      : '#9aa4b0'
-  // glTF images come out of the file itself; other formats are rasterized once.
-  const texture =
-    (standard ? textureByMaterial.get(standard.uuid) : undefined) ??
-    packedTextureFromMaterial(standard?.map)
+  materials?: MeshMaterial[]
+  groups?: MeshGroup[]
+}
+
+function materialLook(
+  mesh: THREE.Mesh,
+  textureByMaterial: Map<string, PackedTexture>,
+): MaterialLook {
+  const geometry = mesh.geometry
+  const slots = materialSlots(mesh, textureByMaterial)
+  const groups = geometry.groups.filter((group) => group.count > 0)
+  const multi = slots.length > 1 && groups.length > 0
+  const hasUv = Boolean(geometry.getAttribute('uv'))
+  const textured = hasUv && slots.some((slot) => slot.texture)
+  const baked = bakedColors(mesh, textured)
+
+  // A textured multi-material mesh keeps every material and its image: the
+  // draw groups decide which image covers which triangles. Flat colours of
+  // untextured groups ride on their own material as well, so nothing is
+  // multiplied twice.
+  if (multi && textured) {
+    const index = geometry.getIndex()
+    const limit = index ? index.count : (geometry.getAttribute('position')?.count ?? 0)
+    const materials: MeshMaterial[] = slots.map((slot) => ({
+      color: slot.color,
+      baseColor: slot.texture?.url,
+      baseColorFlipY: slot.texture && !slot.texture.flipY ? false : undefined,
+      roughness: slot.roughness,
+      metalness: slot.metalness,
+    }))
+    const meshGroups: MeshGroup[] = []
+    for (const group of groups) {
+      const start = Math.max(0, Math.min(limit, Math.floor(group.start)))
+      const count = Math.max(0, Math.min(limit - start, Math.floor(group.count)))
+      if (count === 0) continue
+      meshGroups.push({
+        start,
+        count,
+        material: Math.min(materials.length - 1, Math.max(0, group.materialIndex ?? 0)),
+      })
+    }
+    if (meshGroups.length > 0) {
+      const first = slots[0]
+      return {
+        color: '#ffffff',
+        roughness: first?.roughness ?? 0.58,
+        metalness: first?.metalness ?? 0.08,
+        colors: baked?.colors,
+        materials,
+        groups: meshGroups,
+      }
+    }
+  }
+
+  const first = slots[0]
   return {
-    color,
+    color: baked?.flat ? '#ffffff' : (first?.color ?? '#9aa4b0'),
     colors: baked?.colors,
-    texture,
-    roughness:
-      typeof standard?.roughness === 'number' && Number.isFinite(standard.roughness)
-        ? Math.min(1, Math.max(0, standard.roughness))
-        : 0.58,
-    metalness:
-      typeof standard?.metalness === 'number' && Number.isFinite(standard.metalness)
-        ? Math.min(1, Math.max(0, standard.metalness))
-        : 0.08,
+    texture: first?.texture,
+    roughness: first?.roughness ?? 0.58,
+    metalness: first?.metalness ?? 0.08,
   }
 }
 
@@ -423,6 +529,7 @@ export async function importModel(buffer: ArrayBuffer, fileName: string): Promis
   }
 
   const parsed = await parseScene(buffer, format)
+  await settleMaterialImages(parsed.root)
   const root = parsed.root
   const textureByMaterial = parsed.textures
   root.updateMatrixWorld(true)
@@ -527,8 +634,11 @@ export async function importModel(buffer: ArrayBuffer, fileName: string): Promis
     }
     // The file's own vertex colours ride along with the packed geometry.
     if (look.colors) asset.colors = look.colors
-    // Without texture coordinates a packed image could not be sampled at all.
-    if (look.texture && packedAsset.hasUv) {
+    if (look.materials && look.groups) {
+      asset.materials = look.materials
+      asset.groups = look.groups
+    } else if (look.texture && packedAsset.hasUv) {
+      // Without texture coordinates a packed image could not be sampled at all.
       asset.baseColor = look.texture.url
       if (!look.texture.flipY) asset.baseColorFlipY = false
     }

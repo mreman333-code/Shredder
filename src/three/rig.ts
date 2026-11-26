@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { CharacterSpec, PartImage, ProjectDoc, SceneObject } from '../blend/doc'
-import type { MeshAsset } from '../blend/mesh'
+import type { MeshAsset, MeshMaterial } from '../blend/mesh'
 import { decodePaintColors } from '../blend/paint'
 import { boneForPart, characterSkeleton, type SkeletonDef } from '../blend/skeleton'
 import { meshGeometry, primitiveGeometry } from './geometry'
@@ -43,17 +43,21 @@ function objectMatrix(object: SceneObject): THREE.Matrix4 {
 function applyPaintedColors(
   object: SceneObject,
   geometry: THREE.BufferGeometry,
-  material: THREE.MeshStandardMaterial,
+  material: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[],
 ) {
   const position = geometry.getAttribute('position')
   const paint =
     object.paint && position ? decodePaintColors(object.paint, position.count) : null
+  const list = Array.isArray(material) ? material : [material]
   if (paint) {
     geometry.setAttribute('color', new THREE.Uint8BufferAttribute(paint, 3, true))
-    material.color.set('#ffffff')
-    material.map = null
+    for (const entry of list) {
+      entry.color.set('#ffffff')
+      entry.map = null
+    }
   }
-  material.vertexColors = Boolean(geometry.getAttribute('color'))
+  const vertexColors = Boolean(geometry.getAttribute('color'))
+  for (const entry of list) entry.vertexColors = vertexColors
 }
 
 function materialFor(
@@ -73,8 +77,33 @@ function materialFor(
   })
 }
 
+/** One export material per material of the file, each with its own image. */
+function meshExportMaterials(
+  object: SceneObject,
+  resolveTexture?: TextureResolver,
+): THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[] {
+  const asset = object.mesh
+  if (!asset?.materials?.length) {
+    const map = asset?.hasUv ? resolveTexture?.(asset) : undefined
+    return materialFor(object, map)
+  }
+  return asset.materials.map(
+    (slot) =>
+      new THREE.MeshStandardMaterial({
+        name: object.name,
+        color: slot.color,
+        roughness: slot.roughness,
+        metalness: slot.metalness,
+        map: asset.hasUv && slot.baseColor ? (resolveTexture?.(asset, slot) ?? null) : null,
+      }),
+  )
+}
+
 /** Resolves a packed base-colour image to a decoded texture for export. */
-export type TextureResolver = (asset: MeshAsset) => THREE.Texture | undefined
+export type TextureResolver = (
+  asset: MeshAsset,
+  material?: MeshMaterial,
+) => THREE.Texture | undefined
 
 function buildBoneRig(def: SkeletonDef, prefix: string): BoneRig {
   const byKey = new Map<string, THREE.Bone>()
@@ -381,15 +410,34 @@ export function buildExportScene(
         }
       } else if (object.kind === 'mesh' && object.mesh) {
         // Imported models export as their bind-pose geometry: the same shape
-        // and base-colour texture the viewport shows, ready for Unity or any
-        // other glTF tool.
-        const texture = object.mesh.hasUv ? resolveTexture?.(object.mesh) : undefined
+        // and base-colour textures the viewport shows, ready for Unity or any
+        // other glTF tool. Multi-material meshes keep one material per draw
+        // group, each with its own image.
         const geometry = object.sculpt
           ? sculptGeometryFromAsset(object.sculpt)
           : meshGeometry(object.mesh)
-        const material = materialFor(object, texture)
-        applyPaintedColors(object, geometry, material)
-        const mesh = new THREE.Mesh(geometry, material)
+        const single = object.sculpt || !object.mesh.materials?.length
+        const texture =
+          single && !object.sculpt && object.mesh.hasUv
+            ? resolveTexture?.(object.mesh)
+            : undefined
+        let materials: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[] = single
+          ? materialFor(object, texture)
+          : meshExportMaterials(object, resolveTexture)
+        if (object.paint && Array.isArray(materials)) {
+          // Paint covers the whole part, so its groups collapse into one
+          // white material that the painted vertex colours show through.
+          geometry.clearGroups()
+          for (const entry of materials) entry.dispose()
+          materials = new THREE.MeshStandardMaterial({
+            name: object.name,
+            color: '#ffffff',
+            roughness: object.roughness,
+            metalness: object.metalness,
+          })
+        }
+        applyPaintedColors(object, geometry, materials)
+        const mesh = new THREE.Mesh(geometry, materials)
         mesh.name = object.name
         applyObjectTransform(object, mesh)
         parentNode.add(mesh)
