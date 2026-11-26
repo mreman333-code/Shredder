@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { CharacterSpec, PartImage, ProjectDoc, SceneObject } from '../blend/doc'
 import type { MeshAsset } from '../blend/mesh'
+import { decodePaintColors } from '../blend/paint'
 import { boneForPart, characterSkeleton, type SkeletonDef } from '../blend/skeleton'
 import { meshGeometry, primitiveGeometry } from './geometry'
 import { sculptGeometryFromAsset } from './sculptBuild'
@@ -36,6 +37,23 @@ function objectMatrix(object: SceneObject): THREE.Matrix4 {
     ),
     new THREE.Vector3(object.scale[0], object.scale[1], object.scale[2]),
   )
+}
+
+/** Painted vertex colours replace a part's base colour and texture on export. */
+function applyPaintedColors(
+  object: SceneObject,
+  geometry: THREE.BufferGeometry,
+  material: THREE.MeshStandardMaterial,
+) {
+  const position = geometry.getAttribute('position')
+  const paint =
+    object.paint && position ? decodePaintColors(object.paint, position.count) : null
+  if (paint) {
+    geometry.setAttribute('color', new THREE.Uint8BufferAttribute(paint, 3, true))
+    material.color.set('#ffffff')
+    material.map = null
+  }
+  material.vertexColors = Boolean(geometry.getAttribute('color'))
 }
 
 function materialFor(
@@ -337,18 +355,26 @@ export function buildExportScene(
         // and base-colour texture the viewport shows, ready for Unity or any
         // other glTF tool.
         const texture = object.mesh.hasUv ? resolveTexture?.(object.mesh) : undefined
-        const mesh = new THREE.Mesh(
-          object.sculpt ? sculptGeometryFromAsset(object.sculpt) : meshGeometry(object.mesh),
-          materialFor(object, texture),
-        )
+        const geometry = object.sculpt
+          ? sculptGeometryFromAsset(object.sculpt)
+          : meshGeometry(object.mesh)
+        const material = materialFor(object, texture)
+        applyPaintedColors(object, geometry, material)
+        const mesh = new THREE.Mesh(geometry, material)
         mesh.name = object.name
         applyObjectTransform(object, mesh)
         parentNode.add(mesh)
       } else {
+        // A painted primitive gets its own geometry: the primitive cache is
+        // shared by every cube in the scene.
         const geometry = object.sculpt
           ? sculptGeometryFromAsset(object.sculpt)
-          : primitiveGeometry(object.kind)
-        const mesh = new THREE.Mesh(geometry, materialFor(object))
+          : object.paint
+            ? primitiveGeometry(object.kind).clone()
+            : primitiveGeometry(object.kind)
+        const material = materialFor(object)
+        applyPaintedColors(object, geometry, material)
+        const mesh = new THREE.Mesh(geometry, material)
         mesh.name = object.name
         applyObjectTransform(object, mesh)
         parentNode.add(mesh)

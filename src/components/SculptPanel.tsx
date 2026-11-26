@@ -13,13 +13,14 @@ interface SculptPanelProps {
   onBrush: (brush: SculptBrushId) => void
   onRadius: (radius: number) => void
   onStrength: (strength: number) => void
-  onSymmetry: (axis: keyof SculptSymmetry) => void
+  onSymmetry: (axis: 'x' | 'y' | 'z') => void
+  onSymmetryToggle: () => void
   onSmooth: () => void
   onInvert: () => void
   onReset: () => void
 }
 
-const AXES: (keyof SculptSymmetry)[] = ['x', 'y', 'z']
+const AXES = ['x', 'y', 'z'] as const
 
 export function SculptPanel({
   partName,
@@ -35,6 +36,7 @@ export function SculptPanel({
   onRadius,
   onStrength,
   onSymmetry,
+  onSymmetryToggle,
   onSmooth,
   onInvert,
   onReset,
@@ -131,20 +133,34 @@ export function SculptPanel({
           <b>{strength.toFixed(2)}</b>
         </label>
         <div className="sculpt-sym">
-          <span>Symmetry</span>
+          <label className="sculpt-check">
+            <input type="checkbox" checked={symmetry.enabled} onChange={onSymmetryToggle} />
+            <span>Symmetry</span>
+          </label>
           <div className="sculpt-sym-buttons">
             {AXES.map((axis) => (
-              <button
+              <label
                 key={axis}
-                type="button"
-                className={`sculpt-sym-btn ${symmetry[axis] ? 'active' : ''}`}
-                onClick={() => onSymmetry(axis)}
+                className={`sculpt-axis ${
+                  symmetry.enabled && symmetry[axis] ? 'active' : ''
+                } ${symmetry.enabled ? '' : 'disabled'}`}
                 title={`Mirror the brush across the part's local ${axis.toUpperCase()} axis`}
               >
-                {axis.toUpperCase()}
-              </button>
+                <input
+                  type="checkbox"
+                  checked={symmetry.enabled && symmetry[axis]}
+                  disabled={!symmetry.enabled}
+                  onChange={() => onSymmetry(axis)}
+                />
+                <span>{axis.toUpperCase()}</span>
+              </label>
             ))}
           </div>
+        </div>
+        <div className="sculpt-brush-hint">
+          {symmetry.enabled
+            ? 'Strokes mirror across every ticked axis.'
+            : 'Symmetry is off: strokes only land where you drag.'}
         </div>
       </div>
 

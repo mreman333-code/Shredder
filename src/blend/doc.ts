@@ -1,5 +1,6 @@
 import { MAX_TEXTURE_DATA_URL, type MeshAsset, type MeshBone } from './mesh'
 import { MAX_SCULPT_VERTICES } from './sculpt'
+import { MAX_PAINT_VERTICES, type PaintLayer } from './paint'
 import {
   MAX_ANIMATION_CLIPS,
   normalizeAnimationClip,
@@ -77,6 +78,11 @@ export interface SceneObject {
    * binding and material.
    */
   sculpt?: MeshAsset
+  /**
+   * Painted vertex colours for this part. When present they replace the part's
+   * base colour and texture, and travel with the project and the export.
+   */
+  paint?: PaintLayer
 }
 
 export interface ProjectDoc {
@@ -707,6 +713,15 @@ function normalizeMesh(raw: unknown): MeshAsset | undefined {
     asset.baseColor.length <= MAX_TEXTURE_DATA_URL
       ? asset.baseColor
       : undefined
+  // Three bytes per vertex in base64; the edge case of a short read is caught
+  // again when the attribute is built, so this only rejects impossible sizes.
+  const vertexColors =
+    typeof asset.colors === 'string' &&
+    asset.colors.length > 0 &&
+    vertices > 0 &&
+    asset.colors.length <= vertices * 4 + 8
+      ? asset.colors
+      : undefined
   return {
     vertices,
     triangles,
@@ -714,6 +729,7 @@ function normalizeMesh(raw: unknown): MeshAsset | undefined {
     data,
     skin: typeof asset.skin === 'string' && asset.skin ? asset.skin : undefined,
     bones: bones && bones.length > 0 ? bones : undefined,
+    colors: vertexColors,
     baseColor: packedColor,
     baseColorFlipY: packedColor && asset.baseColorFlipY === false ? false : undefined,
     format: typeof asset.format === 'string' ? asset.format : undefined,
@@ -758,6 +774,14 @@ export function normalizeProject(raw: unknown): ProjectDoc | null {
       // browser's memory when it is opened again.
       const sculpt = normalizeMesh(o.sculpt)
       if (sculpt && sculpt.vertices <= MAX_SCULPT_VERTICES) object.sculpt = sculpt
+    }
+    if (o.paint && typeof o.paint === 'object') {
+      const raw = o.paint as Record<string, unknown>
+      const colors = typeof raw.colors === 'string' ? raw.colors : ''
+      const vertices = Math.floor(readNumber(raw.vertices, 0))
+      if (colors && vertices > 0 && vertices <= MAX_PAINT_VERTICES && colors.length <= vertices * 4 + 8) {
+        object.paint = { colors, vertices }
+      }
     }
     objects.push(object)
   }

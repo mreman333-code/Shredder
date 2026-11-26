@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'rea
 import type { ProjectDoc } from '../blend/doc'
 import type { AnimationClipData } from '../blend/animation'
 import type { SculptBrushId, SculptSymmetry } from '../blend/sculpt'
+import type { PaintTool } from '../blend/paint'
 import {
   SceneManager,
   type ShadingMode,
@@ -19,7 +20,7 @@ interface ViewportProps {
   shading: ShadingMode
   showBones: boolean
   viewLabel: string
-  mode: 'object' | 'pose' | 'sculpt'
+  mode: 'object' | 'pose' | 'sculpt' | 'paint'
   loadToken: number
   callbacks: ViewportCallbacks
   onReady: (manager: SceneManager | null) => void
@@ -47,6 +48,14 @@ interface ViewportProps {
     smooth: boolean
     invert: boolean
   }
+  /** Paint brush setup while the app is in paint mode. */
+  paint?: {
+    enabled: boolean
+    tool: PaintTool
+    color: string
+    radius: number
+    strength: number
+  }
 }
 
 export function Viewport({
@@ -68,6 +77,7 @@ export function Viewport({
   overlay,
   animation,
   sculpt,
+  paint,
 }: ViewportProps) {
   const mountRef = useRef<HTMLDivElement>(null)
   const managerRef = useRef<SceneManager | null>(null)
@@ -118,6 +128,9 @@ export function Viewport({
         callbacksRef.current.onAnimationMatch?.(bound, total),
       onSculptCommit: (id, positions, normals) =>
         callbacksRef.current.onSculptCommit?.(id, positions, normals),
+      onPaintPart: (id, part, parts, triangles) =>
+        callbacksRef.current.onPaintPart?.(id, part, parts, triangles),
+      onPaintCommit: (id, colors) => callbacksRef.current.onPaintCommit?.(id, colors),
     })
     managerRef.current = manager
     onReadyRef.current(manager)
@@ -170,12 +183,27 @@ export function Viewport({
     sculpt?.brush,
     sculpt?.radius,
     sculpt?.strength,
+    sculpt?.symmetry.enabled,
     sculpt?.symmetry.x,
     sculpt?.symmetry.y,
     sculpt?.symmetry.z,
     sculpt?.smooth,
     sculpt?.invert,
   ])
+
+  useEffect(() => {
+    managerRef.current?.setPaintMode(Boolean(paint?.enabled))
+  }, [paint?.enabled])
+
+  useEffect(() => {
+    if (!paint) return
+    managerRef.current?.setPaintBrush({
+      tool: paint.tool,
+      color: paint.color,
+      radius: paint.radius,
+      strength: paint.strength,
+    })
+  }, [paint?.tool, paint?.color, paint?.radius, paint?.strength])
 
   useEffect(() => {
     managerRef.current?.setAnimation(animation?.clip ?? null)
@@ -223,7 +251,14 @@ export function Viewport({
       <div className="vp-overlay vp-top-left">
         <div className="vp-view-name">{viewLabel}</div>
         <div className="vp-sub">
-          {mode === 'object' ? 'Object Mode' : mode === 'pose' ? 'Pose Mode' : 'Sculpt Mode'} ·{' '}
+          {mode === 'object'
+            ? 'Object Mode'
+            : mode === 'pose'
+              ? 'Pose Mode'
+              : mode === 'sculpt'
+                ? 'Sculpt Mode'
+                : 'Paint Mode'}{' '}
+          ·{' '}
           {shading === 'solid' ? 'Solid' : 'Wireframe'}
         </div>
       </div>
@@ -254,8 +289,12 @@ export function Viewport({
 
       <div className="vp-overlay vp-bottom-left">
         <span className="vp-hint touch-only">
-          <b>{mode === 'sculpt' ? '1 finger' : 'Tap'}</b>{' '}
-          {mode === 'sculpt' ? 'sculpt · 2 fingers orbit' : 'select · 1 finger orbit · pinch zoom'}
+          <b>{mode === 'sculpt' || mode === 'paint' ? '1 finger' : 'Tap'}</b>{' '}
+          {mode === 'sculpt'
+            ? 'sculpt · 2 fingers orbit'
+            : mode === 'paint'
+              ? 'paint · 2 fingers orbit'
+              : 'select · 1 finger orbit · pinch zoom'}
         </span>
         <span className="vp-hint mouse-only">
           <b>Click</b> select
@@ -267,7 +306,8 @@ export function Viewport({
           <b>Wheel</b> zoom
         </span>
         <span className="vp-hint mouse-only">
-          <b>{mode === 'sculpt' ? 'LMB' : 'G / R / S'}</b> {mode === 'sculpt' ? 'sculpt' : 'transform'}
+          <b>{mode === 'sculpt' || mode === 'paint' ? 'LMB' : 'G / R / S'}</b>{' '}
+          {mode === 'sculpt' ? 'sculpt' : mode === 'paint' ? 'paint or select' : 'transform'}
         </span>
         {mode === 'sculpt' && (
           <>

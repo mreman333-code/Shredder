@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { PrimitiveKind } from '../blend/doc'
 import { decodeMesh, type MeshAsset } from '../blend/mesh'
+import { decodePaintColors } from '../blend/paint'
 
 function capsuleGeometry(): THREE.BufferGeometry {
   return new THREE.CapsuleGeometry(0.5, 1, 8, 20)
@@ -55,6 +56,11 @@ export function meshGeometry(asset: MeshAsset): THREE.BufferGeometry {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(decoded.positions, 3))
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(decoded.normals, 3))
   if (decoded.uvs) geometry.setAttribute('uv', new THREE.Float32BufferAttribute(decoded.uvs, 2))
+  // The file's own vertex colours: flat per-material colours or glTF COLOR_0.
+  const colors = asset.colors
+    ? decodePaintColors({ colors: asset.colors, vertices: asset.vertices }, asset.vertices)
+    : null
+  if (colors) geometry.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3, true))
   geometry.setIndex(new THREE.BufferAttribute(decoded.indices, 1))
   if (decoded.joints && decoded.weights) {
     geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(decoded.joints, 4))

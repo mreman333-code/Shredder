@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { PrimitiveKind, SceneObject } from '../blend/doc'
 import { decodeMesh, packMesh, type MeshAsset } from '../blend/mesh'
+import { decodePaintColors } from '../blend/paint'
 import {
   MAX_SCULPT_VERTICES,
   SCULPT_TARGET_TRIANGLES,
@@ -133,10 +134,15 @@ export function sculptGeometry(data: SculptMeshData): THREE.BufferGeometry {
 
 export function sculptGeometryFromAsset(asset: MeshAsset): THREE.BufferGeometry {
   const decoded = decodeMesh(asset)
-  return sculptGeometry({
+  const geometry = sculptGeometry({
     positions: decoded.positions,
     normals: decoded.normals,
     indices: decoded.indices,
     uvs: decoded.uvs,
   })
+  const colors = asset.colors
+    ? decodePaintColors({ colors: asset.colors, vertices: asset.vertices }, asset.vertices)
+    : null
+  if (colors) geometry.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3, true))
+  return geometry
 }

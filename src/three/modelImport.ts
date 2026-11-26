@@ -9,6 +9,7 @@ import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js'
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js'
 import { baseObject, uniqueName, type SceneObject } from '../blend/doc'
 import { packMesh, type MeshAsset, type MeshBone } from '../blend/mesh'
+import { packPaintColors } from '../blend/paint'
 import {
   glbBaseColorTextures,
   gltfTextBaseColorTextures,
@@ -236,6 +237,73 @@ function parseDxf(text: string): THREE.Object3D {
 
 // -------------------------------------------------------------- conversion
 
+function materialColor(material: THREE.Material | undefined): [number, number, number] {
+  const color = (material as THREE.MeshStandardMaterial | undefined)?.color
+  if (!(color instanceof THREE.Color)) return [1, 1, 1]
+  return [color.r, color.g, color.b]
+}
+
+const toByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value * 255)))
+
+/**
+ * The colours the file itself authored. Two ways models carry them are read
+ * here instead of being flattened to the first material:
+ * - a COLOR_0 vertex attribute, which glTF multiplies with the base colour;
+ * - one flat material per face group, which becomes one vertex colour per face.
+ * Both are stored as vertex colours so every colour of the model survives the
+ * import, visible, paintable and exported again.
+ */
+function bakedColors(
+  mesh: THREE.Mesh,
+  textureByMaterial: Map<string, PackedTexture>,
+): { colors: string; flat: boolean } | undefined {
+  const geometry = mesh.geometry
+  const position = geometry.getAttribute('position')
+  if (!position) return undefined
+  const count = position.count
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+  const groups = geometry.groups.filter((group) => group.count > 0)
+  const multi = materials.length > 1 && groups.length > 0
+  const hasTexture =
+    Boolean(geometry.getAttribute('uv')) &&
+    materials.some((material) => {
+      const standard = material as THREE.MeshStandardMaterial
+      return textureByMaterial.has(material.uuid) || Boolean(standard?.map)
+    })
+  const source = geometry.getAttribute('color')
+  if (!source && !(multi && !hasTexture)) return undefined
+
+  const colors = new Uint8Array(count * 3)
+  colors.fill(255)
+  if (source && source.count >= count) {
+    for (let i = 0; i < count; i += 1) {
+      colors[i * 3] = toByte(source.getX(i))
+      colors[i * 3 + 1] = toByte(source.getY(i))
+      colors[i * 3 + 2] = toByte(source.getZ(i))
+    }
+  }
+
+  // A textured multi-material mesh keeps its texture in the material, so only
+  // the vertex attribute is carried there; flat-coloured models get every
+  // material's colour painted onto its faces.
+  if (multi && !hasTexture) {
+    const index = geometry.getIndex()
+    for (const group of groups) {
+      const [r, g, b] = materialColor(materials[group.materialIndex ?? 0])
+      const end = Math.min(group.start + group.count, index ? index.count : count)
+      for (let cursor = group.start; cursor < end; cursor += 1) {
+        const vertex = index ? index.getX(cursor) : cursor
+        if (vertex < 0 || vertex >= count) continue
+        colors[vertex * 3] = Math.round(colors[vertex * 3] * r)
+        colors[vertex * 3 + 1] = Math.round(colors[vertex * 3 + 1] * g)
+        colors[vertex * 3 + 2] = Math.round(colors[vertex * 3 + 2] * b)
+      }
+    }
+  }
+
+  return { colors: packPaintColors(colors), flat: multi && !hasTexture }
+}
+
 function materialLook(
   mesh: THREE.Mesh,
   textureByMaterial: Map<string, PackedTexture>,
@@ -244,16 +312,23 @@ function materialLook(
   roughness: number
   metalness: number
   texture?: PackedTexture
+  colors?: string
 } {
   const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
   const standard = material as THREE.MeshStandardMaterial | undefined
-  const color = standard?.color instanceof THREE.Color ? `#${standard.color.getHexString()}` : '#9aa4b0'
+  const baked = bakedColors(mesh, textureByMaterial)
+  const color = baked?.flat
+    ? '#ffffff'
+    : standard?.color instanceof THREE.Color
+      ? `#${standard.color.getHexString()}`
+      : '#9aa4b0'
   // glTF images come out of the file itself; other formats are rasterized once.
   const texture =
     (standard ? textureByMaterial.get(standard.uuid) : undefined) ??
     packedTextureFromMaterial(standard?.map)
   return {
     color,
+    colors: baked?.colors,
     texture,
     roughness:
       typeof standard?.roughness === 'number' && Number.isFinite(standard.roughness)
@@ -450,6 +525,8 @@ export async function importModel(buffer: ArrayBuffer, fileName: string): Promis
       format,
       source: fileName,
     }
+    // The file's own vertex colours ride along with the packed geometry.
+    if (look.colors) asset.colors = look.colors
     // Without texture coordinates a packed image could not be sampled at all.
     if (look.texture && packedAsset.hasUv) {
       asset.baseColor = look.texture.url

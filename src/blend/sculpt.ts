@@ -28,6 +28,8 @@ export const SCULPT_BRUSHES: { id: SculptBrushId; label: string; hint: string }[
 ]
 
 export interface SculptSymmetry {
+  /** Master switch, like Blender's Symmetry tick box: off means no mirroring. */
+  enabled: boolean
   x: boolean
   y: boolean
   z: boolean
@@ -283,9 +285,11 @@ interface MirrorStroke {
 /** The stroke plus one copy per enabled symmetry axis combination. */
 function mirrorStrokes(stroke: SculptStroke): MirrorStroke[] {
   const axes: number[] = []
-  if (stroke.symmetry.x) axes.push(0)
-  if (stroke.symmetry.y) axes.push(1)
-  if (stroke.symmetry.z) axes.push(2)
+  if (stroke.symmetry.enabled) {
+    if (stroke.symmetry.x) axes.push(0)
+    if (stroke.symmetry.y) axes.push(1)
+    if (stroke.symmetry.z) axes.push(2)
+  }
   const strokes: MirrorStroke[] = []
   const combinations = 1 << axes.length
   for (let mask = 0; mask < combinations; mask += 1) {

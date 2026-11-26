@@ -22,6 +22,16 @@ import {
   type SculptMeshData,
   type SculptSymmetry,
 } from '../blend/sculpt'
+import {
+  decodePaintColors,
+  fillSurfacePart,
+  hexColorBytes,
+  paintDab,
+  solidColors,
+  surfaceParts,
+  type PaintTool,
+  type SurfaceParts,
+} from '../blend/paint'
 import { meshGeometry, primitiveGeometry } from './geometry'
 import { sculptGeometryFromAsset } from './sculptBuild'
 import { poseBones } from './pose'
@@ -49,6 +59,10 @@ export interface ViewportCallbacks {
   onAnimationMatch?: (bound: number, total: number) => void
   /** A sculpt stroke finished; these positions belong in the document. */
   onSculptCommit?: (id: string, positions: Float32Array, normals: Float32Array) => void
+  /** A surface part was selected for painting. */
+  onPaintPart?: (id: string, part: number, parts: number, triangles: number) => void
+  /** A fill or brush stroke changed these vertex colours. */
+  onPaintCommit?: (id: string, colors: Uint8Array) => void
 }
 
 export interface SculptBrushState {
@@ -59,6 +73,21 @@ export interface SculptBrushState {
   /** Latched on-screen modifiers, so touch strokes get Shift and Ctrl too. */
   smooth: boolean
   invert: boolean
+}
+
+export interface PaintBrushState {
+  tool: PaintTool
+  color: string
+  radius: number
+  strength: number
+}
+
+interface PaintStrokeState {
+  id: string
+  mesh: THREE.Mesh
+  colors: Uint8Array
+  last: THREE.Vector3
+  changed: boolean
 }
 
 interface SculptStrokeState {
@@ -234,11 +263,22 @@ export class SceneManager {
     id: 'draw',
     radius: 0.12,
     strength: 0.5,
-    symmetry: { x: true, y: false, z: false },
+    symmetry: { enabled: true, x: true, y: false, z: false },
     smooth: false,
     invert: false,
   }
   private stroke: SculptStrokeState | null = null
+  private paintMode = false
+  private paintBrush: PaintBrushState = {
+    tool: 'part',
+    color: '#e0703c',
+    radius: 0.12,
+    strength: 0.6,
+  }
+  private paintStroke: PaintStrokeState | null = null
+  private paintSelection: { id: string; part: number; parts: number } | null = null
+  private paintHighlight: THREE.Mesh | null = null
+  private surfaceCache = new WeakMap<THREE.BufferGeometry, SurfaceParts>()
   private sculptCursor: THREE.Mesh
 
   constructor(container: HTMLElement, callbacks: ViewportCallbacks) {
@@ -414,6 +454,15 @@ export class SceneManager {
   private handlePointerDown = (event: PointerEvent) => {
     this.activePointers.add(event.pointerId)
     this.downPos = { x: event.clientX, y: event.clientY }
+    // Painting owns the left button the same way sculpting does.
+    if (this.paintMode && event.button === 0) {
+      if (this.activePointers.size > 1) {
+        this.endPaintStroke()
+        return
+      }
+      if (this.paintBrush.tool === 'brush') this.beginPaintStroke(event)
+      return
+    }
     if (!this.sculptMode || event.button !== 0) return
     // A second finger turns the gesture into an orbit or pinch, not a brush stroke.
     if (this.activePointers.size > 1) {
@@ -424,6 +473,10 @@ export class SceneManager {
   }
 
   private handlePointerMove = (event: PointerEvent) => {
+    if (this.paintMode && !this.paintStroke) {
+      this.updatePaintCursor(event)
+      return
+    }
     // Strokes are driven by the window listener so they keep working when the
     // cursor leaves the canvas; this only moves the preview ring.
     if (!this.sculptMode || this.stroke) return
@@ -432,6 +485,17 @@ export class SceneManager {
 
   private handlePointerUp = (event: PointerEvent) => {
     this.activePointers.delete(event.pointerId)
+    if (this.paintMode) {
+      if (this.paintStroke) {
+        this.endPaintStroke()
+        return
+      }
+      if (event.pointerType !== 'mouse') this.sculptCursor.visible = false
+      if (event.button !== 0) return
+      const moved = Math.hypot(event.clientX - this.downPos.x, event.clientY - this.downPos.y)
+      if (moved <= 5 && this.paintBrush.tool === 'part') this.pickPaintPart(event)
+      return
+    }
     // A finger never hovers, so the brush ring is cleared when it lifts.
     if (event.pointerType !== 'mouse') this.sculptCursor.visible = false
     if (this.stroke) {
@@ -447,7 +511,10 @@ export class SceneManager {
 
   private handlePointerCancel = (event: PointerEvent) => {
     this.activePointers.delete(event.pointerId)
-    if (this.activePointers.size === 0) this.endSculptStroke()
+    if (this.activePointers.size === 0) {
+      this.endSculptStroke()
+      this.endPaintStroke()
+    }
   }
 
   private pick(event: PointerEvent) {
@@ -484,6 +551,7 @@ export class SceneManager {
       this.controls.touches.ONE = undefined as unknown as THREE.TOUCH
       this.controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
       this.renderer.domElement.style.cursor = 'crosshair'
+      ;(this.sculptCursor.material as THREE.MeshBasicMaterial).color.set(0xf2a84b)
     } else {
       this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE
       this.controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY
@@ -693,6 +761,7 @@ export class SceneManager {
       roughness: obj.roughness,
       metalness: obj.metalness,
       map: asset.hasUv ? (textureForAsset(asset) ?? null) : null,
+      vertexColors: Boolean(asset.colors),
       wireframe: this.shading === 'wire',
     })
     const geometry = meshGeometry(asset)
@@ -769,6 +838,7 @@ export class SceneManager {
       roughness: obj.roughness,
       metalness: obj.metalness,
       map: obj.mesh?.hasUv ? (textureForAsset(obj.mesh) ?? null) : null,
+      vertexColors: Boolean(asset.colors || obj.paint),
       wireframe: this.shading === 'wire',
     })
     const mesh = new THREE.Mesh(geometry, material)
@@ -890,6 +960,7 @@ export class SceneManager {
     node.visible = obj.visible
     if (obj.kind !== 'group') {
       const material = (node as THREE.Mesh).material as THREE.MeshStandardMaterial
+      if (Array.isArray(material)) return
       const parent = obj.parentId
         ? this.doc?.objects.find((entry) => entry.id === obj.parentId)
         : undefined
@@ -900,6 +971,11 @@ export class SceneManager {
       }
       material.roughness = obj.roughness
       material.metalness = obj.metalness
+      // Imported parts keep their packed texture unless paint replaced it.
+      if (obj.kind === 'mesh' && obj.mesh?.hasUv) {
+        material.map = obj.paint ? null : (textureForAsset(obj.mesh) ?? null)
+      }
+      this.applyPaintColors(node as THREE.Mesh, obj)
       material.wireframe = this.shading === 'wire'
     }
   }
@@ -944,6 +1020,13 @@ export class SceneManager {
       }
     }
     walk(null, this.content)
+
+    if (this.paintSelection) {
+      const node = this.nodes.get(this.paintSelection.id)
+      if (!node || (this.paintHighlight && this.paintHighlight.parent !== node)) {
+        this.clearPaintSelection()
+      }
+    }
 
     for (const [id, node] of Array.from(this.nodes.entries())) {
       if (!existing.has(id)) {
@@ -1227,6 +1310,7 @@ export class SceneManager {
   }
 
   setSelection(selectionId: string | null, targetId: string | null) {
+    if (this.paintSelection && this.paintSelection.id !== selectionId) this.clearPaintSelection()
     this.selectionId = selectionId
     this.targetId = targetId
     this.attachTransform()
@@ -1399,6 +1483,379 @@ export class SceneManager {
     return VIEW_LABELS[view]
   }
 
+  // ---------------------------------------------------------------- painting
+
+  setPaintMode(enabled: boolean) {
+    if (this.paintMode === enabled) return
+    this.paintMode = enabled
+    if (enabled) {
+      this.transform.detach()
+      this.controls.mouseButtons.LEFT = undefined as unknown as THREE.MOUSE
+      this.controls.mouseButtons.MIDDLE = THREE.MOUSE.ROTATE
+      this.controls.mouseButtons.RIGHT = THREE.MOUSE.PAN
+      this.controls.touches.ONE = undefined as unknown as THREE.TOUCH
+      this.controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
+      this.renderer.domElement.style.cursor = 'crosshair'
+      this.paintCursorColor()
+    } else {
+      this.endPaintStroke()
+      this.clearPaintSelection()
+      this.sculptCursor.visible = false
+      if (!this.sculptMode) {
+        this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE
+        this.controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY
+        this.controls.mouseButtons.RIGHT = THREE.MOUSE.PAN
+        this.controls.touches.ONE = THREE.TOUCH.ROTATE
+        this.renderer.domElement.style.cursor = ''
+      }
+    }
+  }
+
+  setPaintBrush(brush: Partial<PaintBrushState>) {
+    this.paintBrush = { ...this.paintBrush, ...brush }
+    this.paintCursorColor()
+  }
+
+  private paintCursorColor() {
+    ;(this.sculptCursor.material as THREE.MeshBasicMaterial).color.set(this.paintBrush.color)
+  }
+
+  clearPaintSelection() {
+    this.removePaintHighlight()
+    this.paintSelection = null
+  }
+
+  /** Which mesh the paint tools act on: the selected part, else the whole scene. */
+  private paintTargets(): THREE.Mesh[] {
+    // Only a part that owns its geometry can be painted: primitives share one
+    // cached geometry, while imported and sculpted parts have their own mesh.
+    // Character parts are built into one skinned export mesh, so they are out.
+    const paintable = (node: THREE.Object3D): boolean => {
+      const id = node.userData.objId as string | undefined
+      const obj = id ? this.doc?.objects.find((entry) => entry.id === id) : undefined
+      if (!obj) return false
+      const parent = obj.parentId
+        ? this.doc?.objects.find((entry) => entry.id === obj.parentId)
+        : undefined
+      return !parent?.character
+    }
+    const ownGeometry = (node: THREE.Object3D): node is THREE.Mesh =>
+      node instanceof THREE.Mesh &&
+      this.isVisible(node) &&
+      (node.userData.sculpt === true || node.userData.imported === true) &&
+      paintable(node)
+    const selected = this.selectionId ? this.nodes.get(this.selectionId) : null
+    if (selected && ownGeometry(selected)) return [selected]
+    const meshes: THREE.Mesh[] = []
+    for (const node of this.nodes.values()) {
+      if (ownGeometry(node)) meshes.push(node)
+    }
+    return meshes
+  }
+
+  private paintIntersection(event: PointerEvent, only?: THREE.Mesh) {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    this.raycaster.setFromCamera(this.pointer, this.camera)
+    const targets = only ? [only] : this.paintTargets()
+    if (targets.length === 0) return null
+    return this.raycaster.intersectObjects(targets, false)[0] ?? null
+  }
+
+  private surfacePartsFor(mesh: THREE.Mesh): SurfaceParts | null {
+    const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    const index = mesh.geometry.getIndex()
+    if (!position || !index) return null
+    const triangles = Math.floor(index.count / 3)
+    const cached = this.surfaceCache.get(mesh.geometry)
+    if (cached && cached.facePart.length === triangles) return cached
+    const parts = surfaceParts(
+      position.array as Float32Array,
+      new Uint32Array(index.array as ArrayLike<number>),
+    )
+    this.surfaceCache.set(mesh.geometry, parts)
+    return parts
+  }
+
+  private pickPaintPart(event: PointerEvent) {
+    const hit = this.paintIntersection(event)
+    if (!hit || !(hit.object instanceof THREE.Mesh) || !hit.face) return
+    const id = hit.object.userData.objId as string | undefined
+    if (!id) return
+    const parts = this.surfacePartsFor(hit.object)
+    if (!parts || parts.parts.length === 0) return
+    const face = Math.min(parts.facePart.length - 1, Math.max(0, hit.faceIndex ?? 0))
+    const part = parts.facePart[face]
+    this.paintSelection = { id, part, parts: parts.parts.length }
+    this.showPaintHighlight(hit.object, parts, part)
+    this.callbacks.onPaintPart?.(id, part, parts.parts.length, parts.parts[part].triangles)
+  }
+
+  /** A translucent copy of the selected surface, drawn over the model. */
+  private showPaintHighlight(mesh: THREE.Mesh, parts: SurfaceParts, part: number) {
+    this.removePaintHighlight()
+    const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    const index = mesh.geometry.getIndex()
+    if (!position || !index) return
+    const points: number[] = []
+    for (let triangle = 0; triangle < parts.facePart.length; triangle += 1) {
+      if (parts.facePart[triangle] !== part) continue
+      for (let corner = 0; corner < 3; corner += 1) {
+        const vertex = index.getX(triangle * 3 + corner)
+        points.push(position.getX(vertex), position.getY(vertex), position.getZ(vertex))
+      }
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xf2a84b,
+      transparent: true,
+      opacity: 0.34,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    })
+    const overlay = new THREE.Mesh(geometry, material)
+    overlay.renderOrder = 998
+    overlay.raycast = () => {}
+    mesh.add(overlay)
+    this.paintHighlight = overlay
+  }
+
+  private removePaintHighlight() {
+    const overlay = this.paintHighlight
+    if (!overlay) return
+    overlay.removeFromParent()
+    overlay.geometry.dispose()
+    ;(overlay.material as THREE.Material).dispose()
+    this.paintHighlight = null
+  }
+
+  /** Current colours for a mesh, seeded line for line from what it displays. */
+  private ensurePaintColors(mesh: THREE.Mesh, obj: SceneObject): Uint8Array | null {
+    const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    if (!position) return null
+    const count = position.count
+    const attribute = mesh.geometry.getAttribute('color') as THREE.BufferAttribute | undefined
+    if (attribute && attribute.count === count) {
+      if (attribute.array instanceof Uint8Array && obj.paint) return new Uint8Array(attribute.array)
+      // The file's own colours are a COLOR_0 attribute that the material still
+      // multiplies by its base-colour factor; paint is the final colour, so it
+      // has to include that factor or the part changes shade when painting.
+      const factor = obj.paint ? [255, 255, 255] : hexColorBytes(obj.color)
+      const colors = new Uint8Array(count * 3)
+      for (let i = 0; i < count; i += 1) {
+        colors[i * 3] = Math.min(255, Math.round(attribute.getX(i) * factor[0]))
+        colors[i * 3 + 1] = Math.min(255, Math.round(attribute.getY(i) * factor[1]))
+        colors[i * 3 + 2] = Math.min(255, Math.round(attribute.getZ(i) * factor[2]))
+      }
+      const material = mesh.material as THREE.MeshStandardMaterial
+      material.vertexColors = true
+      material.color.set('#ffffff')
+      material.map = null
+      material.needsUpdate = true
+      return colors
+    }
+    const colors = solidColors(count, hexColorBytes(obj.color))
+    mesh.geometry.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3, true))
+    mesh.geometry.userData.paint = true
+    const material = mesh.material as THREE.MeshStandardMaterial
+    material.vertexColors = true
+    material.color.set('#ffffff')
+    material.map = null
+    material.needsUpdate = true
+    return colors
+  }
+
+  private beginPaintStroke(event: PointerEvent) {
+    if (this.transform.dragging) return
+    const hit = this.paintIntersection(event)
+    if (!hit || !(hit.object instanceof THREE.Mesh) || !hit.face) return
+    const mesh = hit.object
+    const id = mesh.userData.objId as string | undefined
+    const obj = id ? this.doc?.objects.find((entry) => entry.id === id) : undefined
+    if (!id || !obj) return
+    const colors = this.ensurePaintColors(mesh, obj)
+    if (!colors) return
+    if (this.paintSelection?.id !== id) this.clearPaintSelection()
+    this.paintStroke = {
+      id,
+      mesh,
+      colors,
+      last: mesh.worldToLocal(hit.point.clone()),
+      changed: false,
+    }
+    this.controls.enabled = false
+    window.addEventListener('pointermove', this.paintMove)
+    window.addEventListener('pointerup', this.paintUp)
+    this.applyPaintDab(this.paintStroke.last)
+  }
+
+  private paintMove = (event: PointerEvent) => this.movePaintStroke(event)
+
+  private paintUp = () => this.endPaintStroke()
+
+  private paintPointFor(event: PointerEvent): THREE.Vector3 | null {
+    const stroke = this.paintStroke
+    if (!stroke) return null
+    const hit = this.paintIntersection(event, stroke.mesh)
+    if (hit && hit.face) return stroke.mesh.worldToLocal(hit.point.clone())
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    this.raycaster.setFromCamera(this.pointer, this.camera)
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      this.camera.getWorldDirection(new THREE.Vector3()).negate(),
+      stroke.last.clone().applyMatrix4(stroke.mesh.matrixWorld),
+    )
+    const point = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3())
+    return point ? stroke.mesh.worldToLocal(point.clone()) : null
+  }
+
+  private applyPaintDab(point: THREE.Vector3) {
+    const stroke = this.paintStroke
+    if (!stroke) return
+    const position = stroke.mesh.geometry.getAttribute('position') as
+      | THREE.BufferAttribute
+      | undefined
+    if (!position) return
+    const worldScale = stroke.mesh.getWorldScale(new THREE.Vector3())
+    const uniform =
+      (Math.abs(worldScale.x) + Math.abs(worldScale.y) + Math.abs(worldScale.z)) / 3 || 1
+    const painted = paintDab(
+      stroke.colors,
+      position.array as Float32Array,
+      [point.x, point.y, point.z],
+      Math.max(1e-4, this.paintBrush.radius / uniform),
+      hexColorBytes(this.paintBrush.color),
+      this.paintBrush.strength,
+    )
+    stroke.last.copy(point)
+    if (painted === 0) return
+    const attribute = stroke.mesh.geometry.getAttribute('color') as
+      | THREE.BufferAttribute
+      | undefined
+    if (!attribute || !(attribute.array instanceof Uint8Array)) return
+    ;(attribute.array as Uint8Array).set(stroke.colors)
+    attribute.needsUpdate = true
+    stroke.changed = true
+  }
+
+  private movePaintStroke(event: PointerEvent) {
+    if (!this.paintStroke) return
+    const point = this.paintPointFor(event)
+    if (!point) return
+    this.applyPaintDab(point)
+  }
+
+  private endPaintStroke() {
+    const stroke = this.paintStroke
+    if (!stroke) return
+    this.paintStroke = null
+    this.controls.enabled = true
+    window.removeEventListener('pointermove', this.paintMove)
+    window.removeEventListener('pointerup', this.paintUp)
+    if (!stroke.changed) {
+      // A click with the brush that painted nothing must not leave the part
+      // switched to vertex colours (and without its texture).
+      const obj = this.doc?.objects.find((entry) => entry.id === stroke.id)
+      if (obj) this.applyObject(obj, stroke.mesh)
+      return
+    }
+    this.callbacks.onPaintCommit?.(stroke.id, new Uint8Array(stroke.colors))
+  }
+
+  /** Fills the selected surface part; returns the triangles it changed. */
+  fillPaint(color: string): number {
+    const selection = this.paintSelection
+    const id = selection?.id ?? this.selectionId
+    const mesh = id ? this.nodes.get(id) : null
+    const obj = id ? this.doc?.objects.find((entry) => entry.id === id) : undefined
+    if (!(mesh instanceof THREE.Mesh) || !obj || !selection || selection.id !== id) return 0
+    const parts = this.surfacePartsFor(mesh)
+    const index = mesh.geometry.getIndex()
+    const colors = this.ensurePaintColors(mesh, obj)
+    if (!parts || !index || !colors) return 0
+    const filled = fillSurfacePart(
+      new Uint32Array(index.array as ArrayLike<number>),
+      parts,
+      selection.part,
+      colors,
+      hexColorBytes(color),
+    )
+    if (filled === 0) return 0
+    const attribute = mesh.geometry.getAttribute('color') as THREE.BufferAttribute | undefined
+    if (attribute && attribute.array instanceof Uint8Array) {
+      ;(attribute.array as Uint8Array).set(colors)
+      attribute.needsUpdate = true
+    }
+    this.callbacks.onPaintCommit?.(id, new Uint8Array(colors))
+    return filled
+  }
+
+  private updatePaintCursor(event: PointerEvent) {
+    const hit = this.paintIntersection(event)
+    if (!hit || !hit.face) {
+      this.sculptCursor.visible = false
+      return
+    }
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)
+    const worldNormal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize()
+    this.sculptCursor.visible = true
+    this.sculptCursor.position.copy(hit.point).addScaledVector(worldNormal, 0.004)
+    this.sculptCursor.quaternion.setFromUnitVectors(CURSOR_FACING, worldNormal)
+    const radius = this.paintBrush.radius
+    this.sculptCursor.scale.set(radius, radius, radius)
+  }
+
+  /** Swaps a part's material between its packed colours and painted colours. */
+  private applyPaintColors(node: THREE.Mesh, obj: SceneObject) {
+    const geometry = node.geometry
+    const position = geometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    const material = node.material as THREE.MeshStandardMaterial | THREE.Material[]
+    if (!position || Array.isArray(material)) return
+    const paint = obj.paint ? decodePaintColors(obj.paint, position.count) : null
+    if (paint) {
+      const existing = geometry.getAttribute('color') as THREE.BufferAttribute | undefined
+      if (!existing || existing.count !== position.count || !(existing.array instanceof Uint8Array)) {
+        geometry.setAttribute('color', new THREE.Uint8BufferAttribute(paint, 3, true))
+      } else {
+        ;(existing.array as Uint8Array).set(paint)
+        existing.needsUpdate = true
+      }
+      geometry.userData.paint = true
+      material.vertexColors = true
+      material.color.set('#ffffff')
+      material.map = null
+      material.needsUpdate = true
+      return
+    }
+    if (geometry.userData.paint !== true) return
+    // Paint was cleared: put the file's own colours back.
+    geometry.userData.paint = false
+    const asset = obj.sculpt ?? obj.mesh
+    const base = asset?.colors
+      ? decodePaintColors({ colors: asset.colors, vertices: asset.vertices }, position.count)
+      : null
+    const existing = geometry.getAttribute('color') as THREE.BufferAttribute | undefined
+    if (base) {
+      if (!existing || existing.count !== position.count || !(existing.array instanceof Uint8Array)) {
+        geometry.setAttribute('color', new THREE.Uint8BufferAttribute(base, 3, true))
+      } else {
+        ;(existing.array as Uint8Array).set(base)
+        existing.needsUpdate = true
+      }
+      material.vertexColors = true
+    } else {
+      if (existing) geometry.deleteAttribute('color')
+      material.vertexColors = false
+    }
+    material.userData.pictureUrl = undefined
+    material.needsUpdate = true
+  }
+
   dispose() {
     this.disposed = true
     this.renderer.setAnimationLoop(null)
@@ -1409,6 +1866,9 @@ export class SceneManager {
     this.renderer.domElement.removeEventListener('pointercancel', this.handlePointerCancel)
     window.removeEventListener('pointermove', this.strokeMove)
     window.removeEventListener('pointerup', this.strokeUp)
+    window.removeEventListener('pointermove', this.paintMove)
+    window.removeEventListener('pointerup', this.paintUp)
+    this.removePaintHighlight()
     this.sculptCursor.geometry.dispose()
     ;(this.sculptCursor.material as THREE.Material).dispose()
     this.transform.dispose()

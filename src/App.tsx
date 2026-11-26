@@ -43,8 +43,9 @@ import {
   type InitialStore,
   type VFS,
 } from './blend/storage'
-import { base64ToArrayBuffer, decodeMesh, packMesh, type MeshAsset } from './blend/mesh'
+import { base64ToArrayBuffer, bytesToBase64, decodeMesh, packMesh, type MeshAsset } from './blend/mesh'
 import type { SculptBrushId, SculptSymmetry } from './blend/sculpt'
+import type { PaintTool } from './blend/paint'
 import { isPictureFile, readPicture } from './blend/pictures'
 import { importModel, MODEL_ACCEPT } from './three/modelImport'
 import { buildSculptAsset } from './three/sculptBuild'
@@ -72,6 +73,7 @@ import {
 } from './components/Icons'
 import { Menu, type MenuEntry } from './components/Menu'
 import { Outliner } from './components/Outliner'
+import { PaintPanel } from './components/PaintPanel'
 import { Properties } from './components/Properties'
 import { SculptPanel } from './components/SculptPanel'
 import { StartCard } from './components/StartCard'
@@ -83,7 +85,7 @@ import {
   type ViewName,
 } from './three/SceneManager'
 
-type Mode = 'object' | 'pose' | 'sculpt'
+type Mode = 'object' | 'pose' | 'sculpt' | 'paint'
 
 const VIEW_LABELS: Record<ViewName, string> = {
   user: 'User Perspective',
@@ -134,7 +136,7 @@ export function App({ initial }: { initial: InitialStore }) {
   const [shading, setShading] = useState<ShadingMode>('solid')
   const [showBones, setShowBones] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<
-    'outliner' | 'properties' | 'character' | 'animation' | 'sculpt' | 'ai' | 'help'
+    'outliner' | 'properties' | 'character' | 'animation' | 'sculpt' | 'paint' | 'ai' | 'help'
   >('outliner')
   const [filesOpen, setFilesOpen] = useState(false)
   const [view, setView] = useState<ViewName>('user')
@@ -160,6 +162,7 @@ export function App({ initial }: { initial: InitialStore }) {
   const [sculptRadius, setSculptRadius] = useState(0.12)
   const [sculptStrength, setSculptStrength] = useState(0.5)
   const [sculptSymmetry, setSculptSymmetry] = useState<SculptSymmetry>({
+    enabled: true,
     x: true,
     y: false,
     z: false,
@@ -167,6 +170,18 @@ export function App({ initial }: { initial: InitialStore }) {
   // On-screen stand-ins for holding Shift (smooth) or Ctrl (invert) while sculpting.
   const [sculptSmooth, setSculptSmooth] = useState(false)
   const [sculptInvert, setSculptInvert] = useState(false)
+
+  // Painting: select a connected surface part, fill it, or paint with a brush.
+  const [paintTool, setPaintTool] = useState<PaintTool>('part')
+  const [paintColor, setPaintColor] = useState('#e0703c')
+  const [paintRadius, setPaintRadius] = useState(0.12)
+  const [paintStrength, setPaintStrength] = useState(0.6)
+  const [paintPart, setPaintPart] = useState<{
+    id: string
+    index: number
+    count: number
+    triangles: number
+  } | null>(null)
 
   const fsRef = useRef(fs)
   fsRef.current = fs
@@ -357,6 +372,11 @@ export function App({ initial }: { initial: InitialStore }) {
       : selected
         ? (doc.objects.find((o) => o.parentId === selected.id && o.kind !== 'group') ?? null)
         : null
+  // Painting can target the surface that was clicked, which may not be the
+  // outliner selection (a group, or another part of the model).
+  const paintTarget = paintPart
+    ? (doc.objects.find((o) => o.id === paintPart.id) ?? sculptTarget)
+    : sculptTarget
 
   /**
    * Gives a part its own dense mesh the first time it is sculpted. Returns false
@@ -464,6 +484,37 @@ export function App({ initial }: { initial: InitialStore }) {
         setMode('sculpt')
         return
       }
+      if (next === 'paint') {
+        const current = docRef.current
+        const selectedId = selectionIdRef.current
+        let target = selectedId
+          ? (current.objects.find((o) => o.id === selectedId) ?? null)
+          : null
+        if (target && target.kind === 'group') {
+          const groupId = target.id
+          target =
+            current.objects.find((o) => o.parentId === groupId && o.kind !== 'group') ?? null
+        }
+        if (!target) {
+          notify('Select a mesh first — painting works on one part at a time')
+          return
+        }
+        const parent = target.parentId
+          ? current.objects.find((o) => o.id === target?.parentId)
+          : undefined
+        if (parent?.character) {
+          notify('Paint works on models and primitives, not character parts')
+          return
+        }
+        const targetId = target.id
+        setSelectionId(targetId)
+        setSidebarTab('paint')
+        setPaintPart(null)
+        // A primitive needs its own dense surface before it can hold colour.
+        if (!target.sculpt && target.kind !== 'mesh' && !prepareSculptPart(targetId)) return
+        setMode('paint')
+        return
+      }
       if (next === 'object' && selectionIdRef.current) {
         const current = docRef.current
         const obj = current.objects.find((o) => o.id === selectionIdRef.current)
@@ -514,6 +565,50 @@ export function App({ initial }: { initial: InitialStore }) {
     }))
     notify(`${target.name}: original shape restored`)
   }, [notify, updateDoc])
+
+  // One fill or one brush stroke is one undo step, like a sculpt stroke.
+  const commitPaint = useCallback(
+    (id: string, colors: Uint8Array) => {
+      if (colors.length < 3) return
+      const layer = { colors: bytesToBase64(colors), vertices: Math.floor(colors.length / 3) }
+      updateDoc((state) => ({
+        ...state,
+        objects: state.objects.map((o) => (o.id === id ? { ...o, paint: layer } : o)),
+      }))
+    },
+    [updateDoc],
+  )
+
+  const fillPaintPart = useCallback(() => {
+    const filled = viewportRef.current?.fillPaint(paintColor) ?? 0
+    if (filled === 0) {
+      notify('Select a surface part in the viewport first')
+      return
+    }
+    notify(`Filled ${filled.toLocaleString()} triangles`)
+  }, [notify, paintColor])
+
+  const clearPaint = useCallback(() => {
+    const id = paintPart?.id ?? sculptTarget?.id
+    if (!id) return
+    updateDoc((state) => ({
+      ...state,
+      objects: state.objects.map((o) => {
+        if (o.id !== id) return o
+        const next = { ...o }
+        delete next.paint
+        return next
+      }),
+    }))
+    notify('Paint removed')
+  }, [notify, paintPart, sculptTarget, updateDoc])
+
+  // A different tool or mode starts with no surface part selected.
+  useEffect(() => {
+    if (mode !== 'paint') return
+    setPaintPart(null)
+    viewportRef.current?.clearPaintSelection()
+  }, [paintTool, mode])
 
   const toggleMode = useCallback(() => {
     changeMode(modeRef.current === 'object' ? 'pose' : 'object')
@@ -2282,6 +2377,14 @@ export function App({ initial }: { initial: InitialStore }) {
             >
               Sculpt
             </button>
+            <button
+              type="button"
+              className={mode === 'paint' ? 'active' : ''}
+              onClick={() => changeMode('paint')}
+              title="Select a surface part and paint it"
+            >
+              Paint
+            </button>
           </div>
           <div
             className="file-chip"
@@ -2440,6 +2543,13 @@ export function App({ initial }: { initial: InitialStore }) {
             smooth: sculptSmooth,
             invert: sculptInvert,
           }}
+          paint={{
+            enabled: mode === 'paint',
+            tool: paintTool,
+            color: paintColor,
+            radius: paintRadius,
+            strength: paintStrength,
+          }}
           loadToken={loadToken}
           callbacks={{
             onPick: handlePick,
@@ -2447,6 +2557,9 @@ export function App({ initial }: { initial: InitialStore }) {
             onTransformStart: handleTransformStart,
             onTransformEnd: handleTransformEnd,
             onSculptCommit: commitSculptStroke,
+            onPaintPart: (id, part, parts, triangles) =>
+              setPaintPart({ id, index: part, count: parts, triangles }),
+            onPaintCommit: commitPaint,
             onAnimationTime: (time, playing) => {
               animTimeRef.current = time
               setAnimTime(time)
@@ -2533,6 +2646,14 @@ export function App({ initial }: { initial: InitialStore }) {
               title="Sculpt brushes, radius and symmetry"
             >
               Sculpt
+            </button>
+            <button
+              type="button"
+              className={sidebarTab === 'paint' ? 'active' : ''}
+              onClick={() => (mode === 'paint' ? setSidebarTab('paint') : changeMode('paint'))}
+              title="Select a part of the model's surface and paint it"
+            >
+              Paint
             </button>
             <button
               type="button"
@@ -2638,9 +2759,42 @@ export function App({ initial }: { initial: InitialStore }) {
                 onSymmetry={(axis) =>
                   setSculptSymmetry((current) => ({ ...current, [axis]: !current[axis] }))
                 }
+                onSymmetryToggle={() =>
+                  setSculptSymmetry((current) => ({ ...current, enabled: !current.enabled }))
+                }
                 onSmooth={() => setSculptSmooth((current) => !current)}
                 onInvert={() => setSculptInvert((current) => !current)}
                 onReset={resetSculpt}
+              />
+            )}
+            {sidebarTab === 'paint' && (
+              <PaintPanel
+                partName={paintTarget?.name ?? null}
+                vertices={paintTarget?.sculpt?.vertices ?? paintTarget?.mesh?.vertices ?? 0}
+                painted={Boolean(paintTarget?.paint)}
+                tool={paintTool}
+                color={paintColor}
+                radius={paintRadius}
+                strength={paintStrength}
+                selection={
+                  paintPart
+                    ? {
+                        index: paintPart.index + 1,
+                        count: paintPart.count,
+                        triangles: paintPart.triangles,
+                      }
+                    : null
+                }
+                onTool={setPaintTool}
+                onColor={setPaintColor}
+                onRadius={setPaintRadius}
+                onStrength={setPaintStrength}
+                onFill={fillPaintPart}
+                onClear={clearPaint}
+                onResetSelection={() => {
+                  setPaintPart(null)
+                  viewportRef.current?.clearPaintSelection()
+                }}
               />
             )}
             {sidebarTab === 'ai' && (
@@ -2664,7 +2818,13 @@ export function App({ initial }: { initial: InitialStore }) {
       <footer className="statusbar">
         <div className="status-left">
           <span className="status-mode">
-            {mode === 'object' ? 'Object Mode' : mode === 'pose' ? 'Pose Mode' : 'Sculpt Mode'}
+            {mode === 'object'
+              ? 'Object Mode'
+              : mode === 'pose'
+                ? 'Pose Mode'
+                : mode === 'sculpt'
+                  ? 'Sculpt Mode'
+                  : 'Paint Mode'}
           </span>
           <span>{tool === 'select' ? 'Select tool' : `${tool} tool`}</span>
           <span className="status-hint">

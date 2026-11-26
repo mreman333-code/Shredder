@@ -36,6 +36,12 @@ export interface MeshAsset {
   /** Bind skeleton, in the mesh's own space. Empty for static meshes. */
   bones?: MeshBone[]
   /**
+   * Vertex colours read from the file, as base64 RGB bytes per vertex. The
+   * model's own colours (flat per-material colours and glTF COLOR_0) travel
+   * with the geometry instead of collapsing to one material colour.
+   */
+  colors?: string
+  /**
    * Base-colour image packed as a `data:image/...` URL, so the model keeps its
    * texture without any file next to the project.
    */
@@ -210,6 +216,7 @@ export function meshAssetSummary(asset: MeshAsset | undefined): string {
   const parts = [`${asset.triangles.toLocaleString()} tris`]
   if (asset.bones?.length) parts.push(`${asset.bones.length} bones`)
   if (asset.baseColor) parts.push('texture')
+  if (asset.colors) parts.push('vertex colours')
   if (asset.format) parts.push(asset.format.toUpperCase())
   return parts.join(' · ')
 }
