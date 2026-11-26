@@ -46,6 +46,12 @@ import {
 } from './textures'
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'scale'
+
+/** One connected piece of a mesh, listed in the Paint panel. */
+export interface PaintPartInfo {
+  index: number
+  triangles: number
+}
 export type ShadingMode = 'solid' | 'wire'
 export type ViewName = 'user' | 'front' | 'back' | 'left' | 'right' | 'top'
 
@@ -1568,6 +1574,39 @@ export class SceneManager {
   clearPaintSelection() {
     this.removePaintHighlight()
     this.paintSelection = null
+  }
+
+  /** Every connected surface of the part being painted, for the Paint panel. */
+  paintPartList(targetId?: string | null): PaintPartInfo[] {
+    const mesh = this.paintTargetMesh(targetId)
+    if (!mesh) return []
+    const parts = this.surfacePartsFor(mesh)
+    if (!parts) return []
+    return parts.parts.map((part, index) => ({ index, triangles: part.triangles }))
+  }
+
+  /** Selects a surface from that list, including ones hidden behind the model. */
+  selectPaintPart(index: number, targetId?: string | null): boolean {
+    const mesh = this.paintTargetMesh(targetId)
+    if (!mesh) return false
+    const id = mesh.userData.objId as string | undefined
+    const parts = this.surfacePartsFor(mesh)
+    if (!id || !parts || parts.parts.length === 0) return false
+    const part = Math.min(parts.parts.length - 1, Math.max(0, Math.floor(index)))
+    this.paintSelection = { id, part, parts: parts.parts.length }
+    this.showPaintHighlight(mesh, parts, part)
+    this.callbacks.onPaintPart?.(id, part, parts.parts.length, parts.parts[part].triangles)
+    return true
+  }
+
+  /** The mesh the paint tools act on, preferring an explicit target from the app. */
+  private paintTargetMesh(targetId?: string | null): THREE.Mesh | null {
+    const id = targetId ?? this.selectionId ?? this.paintSelection?.id
+    const node = id ? this.nodes.get(id) : null
+    if (!(node instanceof THREE.Mesh) || !this.isVisible(node)) return null
+    const objId = node.userData.objId as string | undefined
+    if (!objId || !this.doc?.objects.some((entry) => entry.id === objId)) return null
+    return node.userData.sculpt === true || node.userData.imported === true ? node : null
   }
 
   /** Which mesh the paint tools act on: the selected part, else the whole scene. */

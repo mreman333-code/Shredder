@@ -9,6 +9,8 @@ interface PaintPanelProps {
   radius: number
   strength: number
   selection: { index: number; count: number; triangles: number } | null
+  parts: Array<{ index: number; triangles: number }>
+  onSelectPart: (index: number) => void
   onTool: (tool: PaintTool) => void
   onColor: (color: string) => void
   onRadius: (radius: number) => void
@@ -27,6 +29,8 @@ export function PaintPanel({
   radius,
   strength,
   selection,
+  parts,
+  onSelectPart,
   onTool,
   onColor,
   onRadius,
@@ -35,6 +39,10 @@ export function PaintPanel({
   onClear,
   onResetSelection,
 }: PaintPanelProps) {
+  // A huge mesh can have thousands of islands; the list stays responsive.
+  const MAX_LISTED_PARTS = 240
+  const listedParts = parts.slice(0, MAX_LISTED_PARTS)
+
   return (
     <div className="sculpt-panel paint-panel">
       <div className="sculpt-heading">
@@ -80,6 +88,43 @@ export function PaintPanel({
             ? 'Click a surface to select it. Every separate piece of the model — a door, a strap, a limb — is its own part.'
             : 'Drag on the part to paint. The colour blends along the brush edge.'}
         </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Surface parts</div>
+        {parts.length > 0 ? (
+          <>
+            <div className="paint-parts" role="listbox" aria-label="Surface parts">
+              {listedParts.map((part) => {
+                const selected = selection?.index === part.index + 1
+                return (
+                  <button
+                    key={part.index}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className={`paint-part ${selected ? 'selected' : ''}`}
+                    onClick={() => onSelectPart(part.index)}
+                  >
+                    <span>Surface {part.index + 1}</span>
+                    <b>{part.triangles.toLocaleString()} tris</b>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="sculpt-brush-hint">
+              {parts.length > MAX_LISTED_PARTS
+                ? `Showing the first ${MAX_LISTED_PARTS} of ${parts.length.toLocaleString()} parts.`
+                : 'Pick a part here to select one hidden behind the model.'}
+            </div>
+          </>
+        ) : (
+          <div className="sculpt-empty">
+            {partName
+              ? 'This part has no separate surface pieces to list.'
+              : 'Select a part to list its surfaces.'}
+          </div>
+        )}
       </div>
 
       <div className="section">

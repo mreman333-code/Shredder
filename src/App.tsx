@@ -182,6 +182,9 @@ export function App({ initial }: { initial: InitialStore }) {
     count: number
     triangles: number
   } | null>(null)
+  const [paintPartList, setPaintPartList] = useState<
+    Array<{ index: number; triangles: number }>
+  >([])
 
   const fsRef = useRef(fs)
   fsRef.current = fs
@@ -606,6 +609,17 @@ export function App({ initial }: { initial: InitialStore }) {
     setPaintPart((current) => (current && current.id === selectionId ? current : null))
     viewportRef.current?.clearPaintSelection()
   }, [paintTool, mode, selectionId])
+
+  // The Paint panel lists every connected surface of the current part, so a
+  // piece hidden behind the model can be picked without orbiting to it.
+  useEffect(() => {
+    if (mode !== 'paint') {
+      setPaintPartList([])
+      return
+    }
+    const manager = viewportRef.current
+    setPaintPartList(manager ? manager.paintPartList(paintTarget?.id ?? null) : [])
+  }, [mode, paintTarget?.id, paintTarget?.sculpt, paintTarget?.mesh])
 
   const toggleMode = useCallback(() => {
     changeMode(modeRef.current === 'object' ? 'pose' : 'object')
@@ -2781,6 +2795,10 @@ export function App({ initial }: { initial: InitialStore }) {
                         triangles: paintPart.triangles,
                       }
                     : null
+                }
+                parts={paintPartList}
+                onSelectPart={(index) =>
+                  viewportRef.current?.selectPaintPart(index, paintTarget?.id ?? null)
                 }
                 onTool={setPaintTool}
                 onColor={setPaintColor}
