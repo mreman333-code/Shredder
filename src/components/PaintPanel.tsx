@@ -107,15 +107,26 @@ export function PaintPanel({
             ? `Surface ${selection.index} of ${selection.count} · ${selection.triangles.toLocaleString()} tris selected`
             : 'No surface selected yet. With the Select part tool, click the model.'}
         </div>
-        <button
-          type="button"
-          className="btn ghost"
-          onClick={tool === 'part' ? onResetSelection : onClear}
-          disabled={tool === 'part' ? !selection : !painted}
-          title={tool === 'part' ? 'Clear the surface selection' : 'Remove all paint from this part'}
-        >
-          {tool === 'part' ? 'Clear selection' : 'Clear paint'}
-        </button>
+        <div className="paint-actions">
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={onResetSelection}
+            disabled={!selection}
+            title="Clear the surface selection"
+          >
+            Clear selection
+          </button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={onClear}
+            disabled={!painted}
+            title="Remove all paint from this part"
+          >
+            Clear paint
+          </button>
+        </div>
       </div>
 
       <div className="section">

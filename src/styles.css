@@ -3088,6 +3088,12 @@ input:focus-visible {
   cursor: default;
 }
 
+.paint-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
 .paint-color {
   display: flex;
   align-items: center;
