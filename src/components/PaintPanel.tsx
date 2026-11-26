@@ -48,8 +48,8 @@ export function PaintPanel({
 
       {!partName && (
         <div className="sculpt-empty">
-          Select a model or a primitive part, then pick Paint. Painting a primitive gives it its
-          own dense surface first, just like sculpting does.
+          Select a model, a primitive or a character body part, then pick Paint. A primitive or
+          body part gets its own dense surface first, just like sculpting does.
         </div>
       )}
 

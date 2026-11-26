@@ -108,6 +108,20 @@ export function createBoneRig(spec: CharacterSpec, prefix: string): BoneRig {
   return buildBoneRig(characterSkeleton(spec), prefix)
 }
 
+/**
+ * One colour per vertex for a body part. Parts without paint stay white so the
+ * merged skinned mesh keeps a single attribute set for every material group.
+ * Returns true only when this part's paint actually fit its vertices.
+ */
+function addPaintColors(geometry: THREE.BufferGeometry, part: SceneObject): boolean {
+  const position = geometry.getAttribute('position')
+  if (!position) return false
+  const paint = part.paint ? decodePaintColors(part.paint, position.count) : null
+  const colors = paint ?? new Uint8Array(position.count * 3).fill(255)
+  geometry.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3, true))
+  return Boolean(paint)
+}
+
 function addSkinAttributes(geometry: THREE.BufferGeometry, jointIndex: number) {
   const count = geometry.attributes.position.count
   const joints = new Uint16Array(count * 4)
@@ -139,6 +153,9 @@ export function buildSkinnedCharacter(
 
   const geometries: THREE.BufferGeometry[] = []
   const materials: THREE.MeshStandardMaterial[] = []
+  // Painted parts carry colour; every other part gets white so the merge has
+  // the same attributes everywhere.
+  const painted = parts.some((part) => part.kind !== 'group' && Boolean(part.paint))
 
   for (const part of parts) {
     if (part.kind === 'group') continue
@@ -150,6 +167,7 @@ export function buildSkinnedCharacter(
     const index = jointIndex.get(jointName)
     if (index === undefined) throw new Error(`No bone drives ${part.name}`)
     addSkinAttributes(geometry, index)
+    const paintedPart = painted && addPaintColors(geometry, part)
 
     // Bake the picture's size into the UVs, so the exported model shows the
     // same crop scaled into its geometry as the viewport does.
@@ -168,9 +186,20 @@ export function buildSkinnedCharacter(
     }
 
     geometries.push(geometry)
-    materials.push(
-      materialFor(part, picture ? textureInstance(picture.url) : undefined, picture),
-    )
+    const material = materialFor(part, picture ? textureInstance(picture.url) : undefined, picture)
+    if (painted) {
+      material.vertexColors = true
+      if (paintedPart) {
+        // Painted colour is the final colour: it replaces the base colour and
+        // the mapped picture on that part.
+        material.color.set('#ffffff')
+        material.map = null
+        material.transparent = false
+        material.opacity = 1
+        material.depthWrite = true
+      }
+    }
+    materials.push(material)
   }
 
   if (geometries.length === 0) throw new Error(`${group.name} has no parts to skin`)

@@ -493,7 +493,11 @@ export class SceneManager {
       if (event.pointerType !== 'mouse') this.sculptCursor.visible = false
       if (event.button !== 0) return
       const moved = Math.hypot(event.clientX - this.downPos.x, event.clientY - this.downPos.y)
-      if (moved <= 5 && this.paintBrush.tool === 'part') this.pickPaintPart(event)
+      if (moved <= 5 && this.paintBrush.tool === 'part' && !this.pickPaintPart(event)) {
+        // Nothing own-geometry under the cursor: a plain body part. Picking it
+        // lets the app give it a surface, so the next click can paint it.
+        this.pick(event)
+      }
       return
     }
     // A finger never hovers, so the brush ring is cleared when it lifts.
@@ -1529,15 +1533,10 @@ export class SceneManager {
   private paintTargets(): THREE.Mesh[] {
     // Only a part that owns its geometry can be painted: primitives share one
     // cached geometry, while imported and sculpted parts have their own mesh.
-    // Character parts are built into one skinned export mesh, so they are out.
+    // Character parts become sculpted on first paint, so they qualify too.
     const paintable = (node: THREE.Object3D): boolean => {
       const id = node.userData.objId as string | undefined
-      const obj = id ? this.doc?.objects.find((entry) => entry.id === id) : undefined
-      if (!obj) return false
-      const parent = obj.parentId
-        ? this.doc?.objects.find((entry) => entry.id === obj.parentId)
-        : undefined
-      return !parent?.character
+      return Boolean(id && this.doc?.objects.some((entry) => entry.id === id))
     }
     const ownGeometry = (node: THREE.Object3D): node is THREE.Mesh =>
       node instanceof THREE.Mesh &&
@@ -1578,18 +1577,19 @@ export class SceneManager {
     return parts
   }
 
-  private pickPaintPart(event: PointerEvent) {
+  private pickPaintPart(event: PointerEvent): boolean {
     const hit = this.paintIntersection(event)
-    if (!hit || !(hit.object instanceof THREE.Mesh) || !hit.face) return
+    if (!hit || !(hit.object instanceof THREE.Mesh) || !hit.face) return false
     const id = hit.object.userData.objId as string | undefined
-    if (!id) return
+    if (!id) return false
     const parts = this.surfacePartsFor(hit.object)
-    if (!parts || parts.parts.length === 0) return
+    if (!parts || parts.parts.length === 0) return false
     const face = Math.min(parts.facePart.length - 1, Math.max(0, hit.faceIndex ?? 0))
     const part = parts.facePart[face]
     this.paintSelection = { id, part, parts: parts.parts.length }
     this.showPaintHighlight(hit.object, parts, part)
     this.callbacks.onPaintPart?.(id, part, parts.parts.length, parts.parts[part].triangles)
+    return true
   }
 
   /** A translucent copy of the selected surface, drawn over the model. */
@@ -1611,7 +1611,8 @@ export class SceneManager {
     const material = new THREE.MeshBasicMaterial({
       color: 0xf2a84b,
       transparent: true,
-      opacity: 0.34,
+      // Light enough that the fill colour still reads through the selection.
+      opacity: 0.2,
       depthTest: false,
       depthWrite: false,
       side: THREE.DoubleSide,

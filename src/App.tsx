@@ -422,8 +422,10 @@ export function App({ initial }: { initial: InitialStore }) {
         return
       }
       setSelectionId(picked.id)
-      // Clicking another part while sculpting makes it sculptable too.
-      if (modeRef.current === 'sculpt') prepareSculptPart(picked.id)
+      // Clicking another part while sculpting or painting makes it paintable too.
+      if (modeRef.current === 'sculpt' || modeRef.current === 'paint') {
+        prepareSculptPart(picked.id)
+      }
     },
     [prepareSculptPart],
   )
@@ -499,13 +501,6 @@ export function App({ initial }: { initial: InitialStore }) {
           notify('Select a mesh first — painting works on one part at a time')
           return
         }
-        const parent = target.parentId
-          ? current.objects.find((o) => o.id === target?.parentId)
-          : undefined
-        if (parent?.character) {
-          notify('Paint works on models and primitives, not character parts')
-          return
-        }
         const targetId = target.id
         setSelectionId(targetId)
         setSidebarTab('paint')
@@ -560,6 +555,8 @@ export function App({ initial }: { initial: InitialStore }) {
         if (o.id !== id) return o
         const next = { ...o }
         delete next.sculpt
+        // Painted colours belonged to the sculpted surface's vertices.
+        delete next.paint
         return next
       }),
     }))
@@ -603,12 +600,12 @@ export function App({ initial }: { initial: InitialStore }) {
     notify('Paint removed')
   }, [notify, paintPart, sculptTarget, updateDoc])
 
-  // A different tool or mode starts with no surface part selected.
+  // A different tool, mode or selected part starts with no surface selected.
   useEffect(() => {
     if (mode !== 'paint') return
-    setPaintPart(null)
+    setPaintPart((current) => (current && current.id === selectionId ? current : null))
     viewportRef.current?.clearPaintSelection()
-  }, [paintTool, mode])
+  }, [paintTool, mode, selectionId])
 
   const toggleMode = useCallback(() => {
     changeMode(modeRef.current === 'object' ? 'pose' : 'object')
@@ -624,7 +621,7 @@ export function App({ initial }: { initial: InitialStore }) {
         return
       }
       setSelectionId(id)
-      if (modeRef.current === 'sculpt') prepareSculptPart(id)
+      if (modeRef.current === 'sculpt' || modeRef.current === 'paint') prepareSculptPart(id)
     },
     [prepareSculptPart],
   )
