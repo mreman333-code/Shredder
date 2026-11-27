@@ -1007,7 +1007,22 @@ export class SceneManager {
         const list = (node as THREE.Mesh).material as
           | THREE.MeshStandardMaterial
           | THREE.MeshStandardMaterial[]
-        for (const entry of Array.isArray(list) ? list : [list]) entry.wireframe = this.shading === 'wire'
+        const entries = Array.isArray(list) ? list : [list]
+        if (!obj.paint) {
+          const slots = obj.mesh?.materials ?? []
+          entries.forEach((entry, index) => {
+            const slot = slots[index]
+            if (!slot) return
+            entry.color.set(slot.color)
+            entry.roughness = slot.roughness
+            entry.metalness = slot.metalness
+            entry.map =
+              obj.mesh?.hasUv && slot.baseColor
+                ? textureFor(slot.baseColor, slot.baseColorFlipY !== false)
+                : null
+          })
+        }
+        for (const entry of entries) entry.wireframe = this.shading === 'wire'
         return
       }
       const parent = obj.parentId

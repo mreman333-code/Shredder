@@ -87,6 +87,8 @@ interface PropertiesProps {
   onPatch: (patch: Partial<SceneObject>, coalesce?: string) => void
   onResetTransform: () => void
   onOpenCharacter: () => void
+  onPickImage: () => void
+  onClearImage: () => void
 }
 
 export function Properties({
@@ -95,6 +97,8 @@ export function Properties({
   onPatch,
   onResetTransform,
   onOpenCharacter,
+  onPickImage,
+  onClearImage,
 }: PropertiesProps) {
   const obj = doc.objects.find((o) => o.id === selectionId) ?? null
 
@@ -159,6 +163,9 @@ export function Properties({
   }
 
   const parts = doc.objects.filter((o) => o.parentId === obj.id).length
+  const hasImage = Boolean(
+    obj.mesh?.baseColor || obj.mesh?.materials?.some((material) => material.baseColor),
+  )
 
   return (
     <div className="properties">
@@ -247,6 +254,38 @@ export function Properties({
               <code>{obj.color.toUpperCase()}</code>
             </div>
           </div>
+          {obj.mesh && (
+            <>
+              <div className="text-row">
+                <span>Image</span>
+                <div className="image-actions">
+                  <button
+                    type="button"
+                    className="mini-action"
+                    onClick={onPickImage}
+                    disabled={!obj.mesh.hasUv}
+                    title={
+                      obj.mesh.hasUv
+                        ? 'Map a PNG or JPEG onto this mesh'
+                        : 'This mesh has no UV coordinates'
+                    }
+                  >
+                    {hasImage ? 'Replace…' : 'Choose PNG/JPEG…'}
+                  </button>
+                  {hasImage && (
+                    <button type="button" className="mini-action" onClick={onClearImage}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+              {!obj.mesh.hasUv && (
+                <div className="panel-hint tight">
+                  This mesh has no UVs, so an image cannot be mapped onto it.
+                </div>
+              )}
+            </>
+          )}
           <label className="slider-row">
             <span>Roughness</span>
             <input

@@ -152,6 +152,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
     body:
       'Use File → Import Model… and pick the file. File → Open Project… also accepts models.\n\n' +
+      'File → Import Animation… loads Unity .anim, glTF/GLB or FBX clips, and File → Import Image / Texture… maps a PNG or JPEG onto the selected model mesh. Both are also available in the Anim tab and the Edit tab.\n\n' +
       'Shredder imports:\n' +
       '• glTF and GLB (.glb, .gltf)\n' +
       '• Blender and Unity exports: FBX, OBJ, DAE (Collada)\n' +
@@ -214,6 +215,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '• A mesh with several materials keeps every material and its own image, not just the first.\n' +
       '• A texture is attached only when the mesh has UV coordinates.\n' +
       '• The material colour is kept as a tint and can be changed in the Edit tab.\n\n' +
+      'To replace a model texture, select the mesh and use Image → Choose PNG/JPEG… in the Edit tab, or drop a picture onto the mesh in the viewport. The image must be packed into the project, so very large files are resized.\n\n' +
       'A saved project and an exported GLB both keep packed textures. Only base-colour maps are imported; normal, roughness and metallic maps are not.\n\n' +
       'If a model imports white, the source file probably has no embedded image or the mesh has no UVs. Re-export it as a GLB with textures embedded and import again.',
     next: ['troubleshoot-white', 'export-glb', 'formats'],
@@ -318,7 +320,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'deselect',
     ],
     body:
-      'Click an object in the viewport, or click its row in the Scene tab. In Object mode a click selects the whole top-level object (for a character, the whole character). In Pose mode it selects the individual part you clicked.\n\n' +
+      'Click a part in the viewport, or click its row in the Scene tab, to select that exact object. A character body part and a mesh inside an imported model are both selectable this way; select the parent group in the Scene tab when you want to move the whole thing.\n\n' +
       'Tab switches between Object and Pose mode. Esc clears the selection. Shift+D duplicates the selection; X or Delete removes it.',
     next: ['pose', 'groups', 'outliner'],
   },

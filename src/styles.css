@@ -1066,6 +1066,18 @@ input:focus-visible {
   color: #9aa0a8;
 }
 
+.image-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.image-actions .mini-action:disabled {
+  color: #6f757d;
+  cursor: default;
+  background: none;
+}
+
 .slider-row {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr) 34px;

@@ -46,10 +46,14 @@ import {
 import { base64ToArrayBuffer, bytesToBase64, decodeMesh, packMesh, type MeshAsset } from './blend/mesh'
 import type { SculptBrushId, SculptSymmetry } from './blend/sculpt'
 import type { PaintTool } from './blend/paint'
-import { isPictureFile, readPicture } from './blend/pictures'
+import { PICTURE_ACCEPT, isPictureFile, readPicture } from './blend/pictures'
 import { importModel, MODEL_ACCEPT } from './three/modelImport'
 import { buildSculptAsset } from './three/sculptBuild'
-import { importAnimationFile, isAnimationOnlyFile } from './three/animationImport'
+import {
+  ANIMATION_ACCEPT,
+  importAnimationFile,
+  isAnimationOnlyFile,
+} from './three/animationImport'
 import { summarizeAiResult, type AiLogEntry, type AiSessionView } from './ai'
 import { AiPanel } from './components/AiPanel'
 import { AnimationPanel } from './components/AnimationPanel'
@@ -209,6 +213,8 @@ export function App({ initial }: { initial: InitialStore }) {
   // The window drop router is registered before the import handler exists.
   const importAnimationRef = useRef<((file: File) => void) | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const animationInputRef = useRef<HTMLInputElement>(null)
 
   const historyRef = useRef<{ past: ProjectDoc[]; future: ProjectDoc[] }>({ past: [], future: [] })
   const coalesceRef = useRef<{ key: string; time: number } | null>(null)
@@ -367,7 +373,7 @@ export function App({ initial }: { initial: InitialStore }) {
     selected && selected.kind !== 'group' && selected.parentId === editingCharacter?.id
       ? selected.id
       : null
-  const transformId = selected ? (mode === 'object' ? selectedTop!.id : selected.id) : null
+  const transformId = selected ? selected.id : null
   // A group cannot be sculpted itself, so the panel shows its first part.
   const sculptTarget =
     selected && selected.kind !== 'group'
@@ -420,10 +426,6 @@ export function App({ initial }: { initial: InitialStore }) {
       const current = docRef.current
       const picked = current.objects.find((o) => o.id === id)
       if (!picked) return
-      if (modeRef.current === 'object') {
-        setSelectionId(topLevelOf(picked, current).id)
-        return
-      }
       setSelectionId(picked.id)
       // Clicking another part while sculpting or painting makes it paintable too.
       if (modeRef.current === 'sculpt' || modeRef.current === 'paint') {
@@ -512,11 +514,6 @@ export function App({ initial }: { initial: InitialStore }) {
         if (!target.sculpt && target.kind !== 'mesh' && !prepareSculptPart(targetId)) return
         setMode('paint')
         return
-      }
-      if (next === 'object' && selectionIdRef.current) {
-        const current = docRef.current
-        const obj = current.objects.find((o) => o.id === selectionIdRef.current)
-        if (obj) setSelectionId(topLevelOf(obj, current).id)
       }
       setMode(next)
     },
@@ -630,10 +627,6 @@ export function App({ initial }: { initial: InitialStore }) {
       const current = docRef.current
       const obj = current.objects.find((o) => o.id === id)
       if (!obj) return
-      if (modeRef.current === 'object') {
-        setSelectionId(topLevelOf(obj, current).id)
-        return
-      }
       setSelectionId(id)
       if (modeRef.current === 'sculpt' || modeRef.current === 'paint') prepareSculptPart(id)
     },
@@ -646,8 +639,7 @@ export function App({ initial }: { initial: InitialStore }) {
     const current = docRef.current
     const target = current.objects.find((o) => o.id === id)
     if (!target) return
-    const rootId = modeRef.current === 'object' ? topLevelOf(target, current).id : id
-    const ids = new Set(descendantIds(current.objects, rootId))
+    const ids = new Set(descendantIds(current.objects, target.id))
     updateDoc((state) => ({ ...state, objects: state.objects.filter((o) => !ids.has(o.id)) }))
     setSelectionId(null)
     notify('Deleted')
@@ -659,7 +651,7 @@ export function App({ initial }: { initial: InitialStore }) {
     const current = docRef.current
     const target = current.objects.find((o) => o.id === id)
     if (!target) return
-    const root = modeRef.current === 'object' ? topLevelOf(target, current) : target
+    const root = target
     const ids = descendantIds(current.objects, root.id)
     const subset = current.objects.filter((o) => ids.includes(o.id))
     const idMap = new Map<string, string>()
@@ -888,6 +880,94 @@ export function App({ initial }: { initial: InitialStore }) {
       notify(`${file.name} mapped to ${partName}`)
     },
     [notify, setCharacterImages],
+  )
+
+  // A picture picked for a model mesh becomes its packed base-colour map, so
+  // it renders in the viewport and travels with the project and GLB export.
+  const setMeshImage = useCallback(
+    (id: string, url: string | null) => {
+      updateDoc((current) => ({
+        ...current,
+        objects: current.objects.map((obj) => {
+          if (obj.id !== id || !obj.mesh) return obj
+          const mesh = { ...obj.mesh }
+          if (url) {
+            mesh.baseColor = url
+            mesh.baseColorFlipY = true
+          } else {
+            delete mesh.baseColor
+            delete mesh.baseColorFlipY
+          }
+          if (mesh.materials?.length) {
+            mesh.materials = mesh.materials.map((slot) => {
+              const next = { ...slot }
+              if (url) {
+                next.baseColor = url
+                next.baseColorFlipY = true
+              } else {
+                delete next.baseColor
+                delete next.baseColorFlipY
+              }
+              return next
+            })
+          }
+          return { ...obj, mesh }
+        }),
+      }))
+    },
+    [updateDoc],
+  )
+
+  /**
+   * Maps a PNG/JPEG onto a selected model mesh, a whole single-mesh model, or
+   * a character body part (the older picture-on-a-part path).
+   */
+  const applyPictureFile = useCallback(
+    async (file: File, objectId: string | null) => {
+      const current = docRef.current
+      const targetId = objectId ?? selectionIdRef.current
+      let target = targetId
+        ? (current.objects.find((obj) => obj.id === targetId) ?? null)
+        : null
+
+      if (target?.kind === 'group' && !target.character) {
+        const ids = new Set(descendantIds(current.objects, target.id))
+        const meshes = current.objects.filter(
+          (obj) => ids.has(obj.id) && obj.mesh?.hasUv,
+        )
+        if (meshes.length === 1) target = meshes[0]
+        else if (meshes.length > 1) {
+          notify('Select the one mesh part you want to put the image on')
+          return
+        }
+      }
+
+      if (target && target.kind !== 'group') {
+        const parent = target.parentId
+          ? current.objects.find((obj) => obj.id === target.parentId)
+          : null
+        // Character body parts use the Character panel's picture mapping.
+        if (!parent?.character) {
+          if (!target.mesh?.hasUv) {
+            notify('That mesh has no UVs, so a picture cannot be mapped onto it')
+            return
+          }
+          try {
+            const url = await readPicture(file)
+            setMeshImage(target.id, url)
+            setSelectionId(target.id)
+            setSidebarTab('properties')
+            notify(`Image mapped to ${target.name}`)
+          } catch (error) {
+            notify(error instanceof Error ? error.message : 'Could not read that picture')
+          }
+          return
+        }
+      }
+
+      await dropPicture(file, objectId)
+    },
+    [dropPicture, notify, setMeshImage],
   )
 
   const handleCharacterChange = useCallback(
@@ -1389,7 +1469,7 @@ export function App({ initial }: { initial: InitialStore }) {
       }
       if (isPictureFile(file)) {
         const objectId = viewportRef.current?.pickAt(event.clientX, event.clientY) ?? null
-        void dropPicture(file, objectId)
+        void applyPictureFile(file, objectId)
         return
       }
       void importFile(file)
@@ -1401,7 +1481,7 @@ export function App({ initial }: { initial: InitialStore }) {
       window.removeEventListener('dragover', handleDragOver)
       window.removeEventListener('drop', handleDrop)
     }
-  }, [dropPicture, importFile])
+  }, [applyPictureFile, importFile])
 
   const exportProject = useCallback(async () => {
     const camera = viewportRef.current?.getCamera() ?? docRef.current.camera
@@ -1876,6 +1956,8 @@ export function App({ initial }: { initial: InitialStore }) {
     { divider: true },
     { label: 'Import Project (.blend / .mblend)…', onClick: () => importRef.current?.click() },
     { label: 'Import Model… (FBX, OBJ, glTF, STL…)', onClick: () => void openModelFromDisk() },
+    { label: 'Import Image / Texture… (PNG, JPEG)', onClick: () => imageInputRef.current?.click() },
+    { label: 'Import Animation… (.anim, .glb, .fbx)', onClick: () => animationInputRef.current?.click() },
     { label: 'Export .mblend', onClick: exportProject },
     { label: 'Export .glb', onClick: exportGlb },
   ]
@@ -2702,6 +2784,14 @@ export function App({ initial }: { initial: InitialStore }) {
                 onPatch={patchSelection}
                 onResetTransform={resetTransform}
                 onOpenCharacter={() => setSidebarTab('character')}
+                onPickImage={() => imageInputRef.current?.click()}
+                onClearImage={() => {
+                  const id = selectionIdRef.current
+                  if (id) {
+                    setMeshImage(id, null)
+                    notify('Image removed')
+                  }
+                }}
               />
             )}
             {sidebarTab === 'character' && (
@@ -2922,6 +3012,28 @@ export function App({ initial }: { initial: InitialStore }) {
         onChange={(event) => {
           const file = event.target.files?.[0]
           if (file) void importFile(file)
+          event.target.value = ''
+        }}
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept={PICTURE_ACCEPT}
+        className="hidden-input"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) void applyPictureFile(file, null)
+          event.target.value = ''
+        }}
+      />
+      <input
+        ref={animationInputRef}
+        type="file"
+        accept={ANIMATION_ACCEPT}
+        className="hidden-input"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) void importAnimation(file)
           event.target.value = ''
         }}
       />
