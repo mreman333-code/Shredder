@@ -939,6 +939,9 @@ export function App({ initial }: { initial: InitialStore }) {
         else if (meshes.length > 1) {
           notify('Select the one mesh part you want to put the image on')
           return
+        } else {
+          notify('That model has no UVs, so a picture cannot be mapped onto it')
+          return
         }
       }
 
